@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Hack and Slash</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <style>
+        body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { box-shadow: 0 0 20px rgba(0,0,0,0.8); }
+    </style>
+</head>
+<body>
+
+<script>
+    // --- SCENE 1: MENU UTAMA (START SCREEN) ---
+    class SceneMenu extends Phaser.Scene {
+        constructor() {
+            super({ key: 'SceneMenu' });
+        }
+
+        preload() {
+            // Memuat aset minimal jika diperlukan
+        }
+
+        create() {
+            const width = this.scale.width;
+            const height = this.scale.height;
+
+            this.add.text(width / 2, height / 2 - 80, 'MAIN KAN', {
+                fontSize: '48px',
+                fill: '#ffffff',
+                fontStyle: 'bold',
+                fontFamily: 'Arial'
+            }).setOrigin(0.5);
+
+            let tombolMulai = this.add.text(width / 2, height / 2 + 20, 'MULAI GAME', {
+                fontSize: '24px',
+                fill: '#00ff00',
+                fontStyle: 'bold',
+                fontFamily: 'Arial',
+                backgroundColor: '#333333',
+                padding: { x: 20, y: 10 }
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+            tombolMulai.on('pointerover', () => tombolMulai.setStyle({ fill: '#ffffff', backgroundColor: '#00ff00' }));
+            tombolMulai.on('pointerout', () => tombolMulai.setStyle({ fill: '#00ff00', backgroundColor: '#333333' }));
+            tombolMulai.on('pointerdown', () => this.scene.start('SceneGame'));
+
+            // --- PERBAIKAN GAMEPAD DI MENU: GUNAKAN EVENT LISTENER SEKALI TEKAN ---
+            this.input.gamepad.on('down', (pad, button) => {
+                // Tombol B (indeks 1) digunakan untuk memulai game dari menu utama
+                if (button.index === 1) {
+                    this.input.gamepad.removeAllListeners(); // Bersihkan listener sebelum pindah scene
+                    this.scene.start('SceneGame');
+                }
+            });
+
+            // Pastikan listener dibersihkan saat scene ditutup
+            this.events.once('shutdown', () => {
+                this.input.gamepad.removeAllListeners();
+            });
+        }
+        
+        // --- FUNGSI UPDATE DI SCENEMENU DIHAPUS TOTAL AGAR TIDAK BENTROK ---
+    }
+
+    // --- SCENE 2: PERMAINAN (GAMEPLAY) ---
+    class SceneGame extends Phaser.Scene {
+        constructor() {
+            super({ key: 'SceneGame' });
+        }
+
+        preload() {
+            // Mengambil gambar aset gratis dari internet sebagai contoh placeholder
+            this.load.image('lantai', 'assets/land/_.jpeg'); // Ganti dengan URL gambar lantai Anda nanti
+            this.load.image('karakter', 'assets/character/Subjek.png');
+            this.load.image('batu', 'assets/land/Subjek.png');
+            this.load.image('musuh', 'assets/enemy/Subjek.png');
+        }
+
+        create() {
+            // --- TAMBAHKAN BARIS RESET INI DI PALING ATAS CREATE SCENEGAME ---
+            hp = 60;   // Sesuaikan dengan nyawa awal yang Anda inginkan (60)
+            skor = 0;
+            isKnockback = false;
+            isAttacking = false;
+
+            // 1. Mengatur batas luas dunia game agar karakter tidak bisa jalan menembus batas map
+            this.physics.world.setBounds(0, 0, MAP_WIDTH, MAP_HEIGHT);
+
+            // 2. Membuat background bermotif/pattern (TileSprite) yang otomatis mengulang keseluruh map
+            // Parameter: (X, Y, Lebar_Map, Tinggi_Map, Kunci_Aset)
+            let background = this.add.tileSprite(0, 0, MAP_WIDTH, MAP_HEIGHT, 'lantai');
+            background.setOrigin(0, 0); // Mengatur titik tumpu gambar di pojok kiri atas
+
+            batuGroup = this.physics.add.staticGroup();
+
+            // ATUR JUMLAH BATU DI SINI (Ubah angka ini sesuai selera Anda)
+            const JUMLAH_BATU = 200; 
+
+            for (let i = 0; i < JUMLAH_BATU; i++) {
+                // Mengacak posisi X dan Y di sepanjang ukuran MAP_WIDTH dan MAP_HEIGHT
+                // Ditambahkan margin sedikit (misal 100px) agar tidak terlalu mepet di ujung paling luar map
+                let randomX = Phaser.Math.Between(100, MAP_WIDTH - 100);
+                let randomY = Phaser.Math.Between(100, MAP_HEIGHT - 100);
+
+                // Membuat objek batu di koordinat acak tersebut
+                let batu = batuGroup.create(randomX, randomY, 'batu');
+
+                // OPsional: Jika ingin ukuran batunya diatur atau diperbesar lewat kode
+                batu.setDisplaySize(64, 48); 
+
+                // Memperbarui badan fisika batu agar pas dengan ukuran display yang baru dikustomisasi
+                batu.refreshBody(); 
+            }
+
+            // 3. Menaruh karakter di tengah-tengah map yang luas tersebut
+            player = this.physics.add.image(MAP_WIDTH / 2, MAP_HEIGHT / 2, 'karakter');
+            player.setCollideWorldBounds(true); // Karakter akan tertahan di batas luar MAP_WIDTH & MAP_HEIGHT
+            this.physics.add.collider(player, batuGroup);
+
+            // 4. Mengatur Kamera
+            // Menyuruh kamera utama untuk mengikuti pergerakan karakter
+            this.cameras.main.startFollow(player, true, 0.05, 0.05);
+            
+            // Membatasi kamera agar tidak nge-scroll keluar dari batas luas map
+            this.cameras.main.setBounds(0, 0, MAP_WIDTH, MAP_HEIGHT);
+
+            // 5. Mengaktifkan keyboard
+            cursors = this.input.keyboard.createCursorKeys();
+
+            // Mengatur kamera untuk mengikuti player
+            this.cameras.main.startFollow(player, true, 0.05, 0.05);
+            this.cameras.main.setBounds(0, 0, MAP_WIDTH, MAP_HEIGHT);
+
+            // 1. Membuat kelompok musuh dinamis (bisa bergerak)
+            enemyGroup = this.physics.add.group();
+
+            // Daftarkan tombol WASD selain tombol panah bawaan
+            this.wasd = this.input.keyboard.addKeys({
+                up: Phaser.Input.Keyboard.KeyCodes.W,
+                down: Phaser.Input.Keyboard.KeyCodes.S,
+                left: Phaser.Input.Keyboard.KeyCodes.A,
+                right: Phaser.Input.Keyboard.KeyCodes.D
+            });
+
+            // 2. Logika memunculkan musuh secara acak dalam kelompok (2-4 musuh sekaligus)
+            // PASTIKAN STRUKTUR FOR UTAMA INI ADA KEMBALI
+            for (let i = 0; i < JUMLAH_SPAWN_TITIK; i++) {
+                let pusatX = Phaser.Math.Between(200, MAP_WIDTH - 200);
+                let pusatY = Phaser.Math.Between(200, MAP_HEIGHT - 200);
+                let jumlahMusuhDiTitikIni = Phaser.Math.Between(2, 4);
+
+                for (let j = 0; j < jumlahMusuhDiTitikIni; j++) {
+                    let spawnX = pusatX + Phaser.Math.Between(-40, 40);
+                    let spawnY = pusatY + Phaser.Math.Between(-40, 40);
+
+                    let enemy = enemyGroup.create(spawnX, spawnY, 'musuh');
+                    enemy.setCollideWorldBounds(true);
+                    enemy.setDisplaySize(48, 64);
+                    enemy.body.setSize(24, 24);
+                    enemy.setBounce(0.2); 
+                    enemy.setData('sedangCooldown', false); 
+                    enemy.setData('enemyHp', 50); 
+
+                    // --- TAMBAHKAN LINE INI: Mengacak kecepatan musuh antara 70 sampai 150 ---
+                    // Anda bisa mengubah rentang angka (70, 150) ini sesuai keinginan
+                    let randomSpeed = Phaser.Math.Between(70, 150);
+                    enemy.setData('kecepatanKustom', randomSpeed);
+
+                    let enemyHpText = this.add.text(enemy.x, enemy.y - 40, '50', {
+                        fontSize: '12px',
+                        fill: '#ff0000',
+                        fontStyle: 'bold'
+                    });
+                    enemyHpText.setOrigin(0.5, 0.5);
+                    enemy.setData('hpTextObject', enemyHpText);
+                }
+            }
+
+            this.physics.add.collider(player, enemyGroup, this.hantamPlayer, null, this);
+
+            // 3. --- PENGATURAN KOLISI AGAR TIDAK NUMPUK ---
+            this.physics.add.collider(enemyGroup, enemyGroup);   // Musuh saling bertabrakan (TIDAK NUMPUK)
+            this.physics.add.collider(enemyGroup, batuGroup);    // Musuh tidak bisa menembus batu rintangan
+
+            // --- ATUR KEDEKATAN KAMERA DI SINI ---
+            // Angka default standar adalah 1. 
+            // Iseng ubah angkanya sesuai selera Anda:
+            this.cameras.main.setZoom(2.5);
+
+            player.setDisplaySize(44, 64)
+
+            background.setTileScale(0.2, 0.2);
+
+            // 1. Ambil koordinat pojok kiri atas dari sudut pandang kamera saat ini
+            const kordinatX = this.cameras.main.scrollX - 120;
+            const kordinatY = this.cameras.main.scrollY - 230;
+
+            // 2. Buat teks menggunakan koordinat kamera tersebut
+            hpText = this.add.text(kordinatX, kordinatY, 'HP: ' + hp, {
+                fontSize: '16px',
+                fill: '#000000', // Warna kuning (paling kontras dan gampang kelihatan)
+                fontStyle: 'bold',
+                fontFamily: 'Arial'
+            });
+
+            hpText.setScrollFactor(0);
+            hpText.setDepth(999);
+
+            // Buat teks skor tepat berada di bawah posisi teks HP
+            skorText = this.add.text(kordinatX, kordinatY + 25, 'SKOR: ' + skor, {
+                fontSize: '16px',
+                fill: '#000000', // Warna putih
+                fontStyle: 'bold',
+                fontFamily: 'Arial'
+            });
+
+            skorText.setScrollFactor(0);
+            skorText.setDepth(999);
+
+            // Hapus registrasi spaceKey lama, ganti dengan listen klik mouse:
+            this.input.on('pointerdown', (pointer) => {
+                // Angka 0 menandakan klik kiri mouse
+                if (pointer.button === 0) {
+                    this.eksekusiSerangan();
+                }
+            });
+
+            // 2. Buat objek sensor serangan (hitbox) tak terlihat
+            // Ukuran 80x80 piksel (sesuai jangkauan senjata)
+            attackZone = this.physics.add.image(0, 0, null);
+            attackZone.setOrigin(0.5, 0.5);
+            attackZone.body.setAllowGravity(false);
+            attackZone.setVisible(false); // Sembunyikan karena ini cuma sensor gaib
+            attackZone.body.enable = false; // Matikan dulu di awal game
+
+            // 3. Buat objek khusus untuk menggambar efek visual ayunan senjata
+            attackVisual = this.add.graphics();
+            attackVisual.setDepth(998); // Taruh di atas lantai dan di bawah teks HP
+
+            // Deteksi jika sensor tebasan (attackZone) menyentuh musuh di dalam enemyGroup
+            this.physics.add.overlap(attackZone, enemyGroup, this.tebasMusuh, null, this);
+
+            this.input.gamepad.once('down', (pad, button) => {
+                console.log('Gamepad terdeteksi dan aktif!');
+            });
+
+            // --- TAMBAHKAN INI DI DALAM CREATE() SCENEGAME ---
+            this.tombolEsc = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+
+            // Dengarkan jika tombol Menu (Start / Indeks 9) di gamepad ditekan saat sedang bermain
+            this.input.gamepad.on('down', (pad, button) => {
+                if (button.index === 9 && hp > 0) { // Indeks 9 adalah tombol Start / Options / Menu
+                    this.pemicuPause();
+                }
+            });
+
+            // --- PERBAIKI PENGATURAN EVENT PAUSE & RESUME PADA SCENEGAME ---
+            this.events.on('pause', () => { 
+                // Matikan input saat game dijeda agar tidak bocor ke lapisan pause
+                this.input.gamepad.removeAllListeners(); 
+            });
+
+            this.events.on('resume', () => {
+                // Pastikan mesin fisika langsung bangun seketika
+                if (this.physics && this.physics.world) {
+                    this.physics.resume(); 
+                }
+                
+                // Bersihkan listener hantu dari ScenePause
+                this.input.gamepad.removeAllListeners(); 
+                
+                // Beri jeda 300ms agar jari sempat diangkat dari tombol sebelum bisa pause lagi
+                this.time.delayedCall(300, () => {
+                    this.input.gamepad.on('down', (pad, button) => {
+                        if (button.index === 9 && hp > 0) {
+                            this.pemicuPause();
+                        }
+                    });
+                });
+            });
+        }
+
+        update() {
+            // --- LOGIKA CEK TOMBOL PAUSE (Paling Atas) ---
+            if (Phaser.Input.Keyboard.JustDown(this.tombolEsc) && hp > 0) {
+                this.pemicuPause();
+                return; // Hentikan kalkulasi frame gerakan saat pause dipicu
+            }
+            
+            // 1. DAFTARKAN PAD PERTAMA JIKA TERHUBUNG
+            let pad = this.input.gamepad.total ? this.input.gamepad.getPad(0) : null;
+
+            // 2. LOGIKA ARAH HADAP (MOUSE ATAU ANALOG KANAN)
+            let pointer = this.input.activePointer;
+            let menggunakanStikUntukMelihat = pad && (Math.abs(pad.axes[2].value) > 0.1 || Math.abs(pad.axes[3].value) > 0.1);
+
+            if (menggunakanStikUntukMelihat) {
+                // Jika analog kanan stik digerakkan, hadap ditentukan dari nilai sumbu X analog kanan (axes[2])
+                if (pad.axes[2].value < 0) {
+                    player.setFlipX(true);
+                    arahTerakhir = 'kiri';
+                } else if (pad.axes[2].value > 0) {
+                    player.setFlipX(false);
+                    arahTerakhir = 'kanan';
+                }
+            } else {
+                // Jika tidak ada input stik, gunakan posisi kursor mouse seperti biasa
+                if (pointer.worldX < player.x) {
+                    player.setFlipX(true);
+                    arahTerakhir = 'kiri';
+                } else {
+                    player.setFlipX(false);
+                    arahTerakhir = 'kanan';
+                }
+            }
+
+            // 3. LOGIKA GERAKAN GABUNGAN (WASD/PANAH ATAU ANALOG KIRI)
+            if (!isKnockback) {
+                player.setVelocity(0);
+
+                let stikKiriX = pad ? pad.axes[0].value : 0;
+                let stikKiriY = pad ? pad.axes[1].value : 0;
+                const AMBANG_BATAS = 0.2; 
+
+                // Tambahkan "this." di depan variabel wasd agar tombol W, A, S, D terbaca
+                // Cek Gerakan Horizontal (Kiri / Kanan)
+                if (cursors.left.isDown || this.wasd.left.isDown || stikKiriX < -AMBANG_BATAS) {
+                    player.setVelocityX(-120); 
+                } else if (cursors.right.isDown || this.wasd.right.isDown || stikKiriX > AMBANG_BATAS) {
+                    player.setVelocityX(120);  
+                }
+
+                // Cek Gerakan Vertikal (Atas / Bawah)
+                if (cursors.up.isDown || this.wasd.up.isDown || stikKiriY < -AMBANG_BATAS) {
+                    player.setVelocityY(-120); 
+                } else if (cursors.down.isDown || this.wasd.down.isDown || stikKiriY > AMBANG_BATAS) {
+                    player.setVelocityY(120);  
+                }
+            } else {
+                player.setVelocityX(player.body.velocity.x * 0.9);
+                player.setVelocityY(player.body.velocity.y * 0.9);
+            }
+
+            // 4. DETEKSI TOMBOL RT (RIGHT TRIGGER / R2) UNTUK SERANGAN
+            // Di Phaser, RT biasanya dikenali sebagai tombol indeks ke-7 (buttons[7]) atau axes[5]
+            if (pad && pad.buttons[7] && pad.buttons[7].pressed) {
+                this.eksekusiSerangan();
+            }
+
+            // --- LOGIKA AI MUSUH MENGEJAR KARAKTER ---
+            enemyGroup.getChildren().forEach((enemy) => {
+                
+                // Tambahkan pengecekan ini: Jika musuh sedang kedorong, abaikan fungsi kejar
+                if (enemy.getData('sedangKnockback')) {
+                    // Berikan efek friksi/perlambatan bertahap selama kedorong agar gerakannya halus
+                    enemy.setVelocityX(enemy.body.velocity.x * 0.9);
+                    enemy.setVelocityY(enemy.body.velocity.y * 0.9);
+                    
+                    // Update posisi teks HP di atas kepalanya saat kedorong
+                    let tks = enemy.getData('hpTextObject');
+                    if (tks) tks.setPosition(enemy.x, enemy.y - 40);
+                    return; // Lewati sisa kode kejar di bawah
+                }
+
+                let jarak = Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y);
+
+                if (jarak < RADIUS_DETEKSI) {
+                    this.physics.moveToObject(enemy, player, KECEPATAN_MUSUH);
+                    if (player.x < enemy.x) {
+                        enemy.setFlipX(true);  
+                    } else {
+                        enemy.setFlipX(false); 
+                    }
+                } else {
+                    enemy.setVelocity(0);
+                }
+                
+                let tks = enemy.getData('hpTextObject');
+                if (tks) {
+                    tks.setPosition(enemy.x, enemy.y - 40);
+                }
+            });
+        }
+
+        // --- TARUH METHOD PAUSE MANDIRI ANDA DI SINI (DI LUAR UPDATE) ---
+        pemicuPause() {
+            if (player && player.body) {
+                player.setVelocity(0); // Menggunakan variabel global 'player'
+            }
+            this.physics.pause();       
+            this.scene.pause();         
+            this.scene.launch('ScenePause'); 
+        }
+
+        hantamPlayer(player, enemy) {
+            // 1. CEK COOLDOWN SPESIFIK MILIK MUSUH YANG MENABRAK
+            if (enemy.getData('sedangCooldown')) {
+                // Jika musuh ini baru saja memukul, dia cuma bisa dorong dikit (knockback ringan)
+                bikinKnockback(player, enemy, 150); 
+                return;
+            }
+
+            // 2. PROSES DAMAGE (Karena musuh ini sedang tidak cooldown)
+            hp -= 10;
+            hpText.setText('HP: ' + hp);
+            
+            // Aktifkan cooldown khusus untuk MUSUH INI SAJA
+            enemy.setData('sedangCooldown', true);
+            
+            // Status knockback player tetap aktif agar keyboard terkunci 0.2 detik
+            isKnockback = true; 
+            bikinKnockback(player, enemy, 400); 
+
+            // TIMER KNOCKBACK PLAYER (0.2 detik lepas kontrol keyboard)
+            this.time.delayedCall(200, () => {
+                isKnockback = false; 
+            }, [], this);
+
+            // 3. --- EFEK KEDIP MERAH INSTAN SAAT KENA HIT ---
+            player.setTint(0xff0000); 
+            this.time.delayedCall(150, () => {
+                if (hp > 0) player.clearTint();
+            }, [], this);
+
+            // 4. --- TIMER COOLDOWN 2 DETIK KHUSUS UNTUK MUSUH INI ---
+            this.time.delayedCall(2000, () => {
+                // Setelah 2 detik, hanya musuh ini yang diizinkan untuk menyerang kembali
+                if (enemy && enemy.active) {
+                    enemy.setData('sedangCooldown', false);
+                }
+            }, [], this);
+
+            // 5. --- LOGIKA GAME OVER ---
+            if (hp <= 0) {
+                hp = 0;
+                hpText.setText('HP: GAME OVER');
+                player.setVelocity(0);      
+                player.setTint(0xff0000);    
+                this.physics.pause();     
+                
+                // AMBIL REFERENSI SCENE DENGAN BENAR AGAR BISA PINDAH LAYAR
+                let targetScene = player.scene;
+                targetScene.time.delayedCall(500, () => {
+                    targetScene.scene.start('SceneGameOver');
+                });
+            }
+        }
+
+        eksekusiSerangan() {
+            if (isAttacking || hp <= 0) return;
+
+            const JANGKAUAN = JANGKAUAN_SERANGAN;
+            let pointer = this.input.activePointer;
+            let pad = this.input.gamepad.total ? this.input.gamepad.getPad(0) : null;
+            
+            let sudutRadian;
+
+            // Cek apakah analog kanan stik sedang diarahkan
+            let menggunakanStikUntukMelihat = pad && (Math.abs(pad.axes[2].value) > 0.1 || Math.abs(pad.axes[3].value) > 0.1);
+
+            if (menggunakanStikUntukMelihat) {
+                // Hitung sudut berdasarkan koordinat sumbu X (axes[2]) dan Y (axes[3]) dari analog kanan stik
+                sudutRadian = Math.atan2(pad.axes[3].value, pad.axes[2].value);
+            } else {
+                // Jika stik diam, gunakan sudut dari posisi player ke kursor mouse
+                sudutRadian = Phaser.Math.Angle.Between(player.x, player.y, pointer.worldX, pointer.worldY);
+            }
+
+            let sudutDerajat = Phaser.Math.RadToDeg(sudutRadian);
+            isAttacking = true;
+
+            attackVisual.clear();
+            attackVisual.lineStyle(4, 0xffffff, 0.8);
+            attackVisual.beginPath();
+
+            // Menggeser letak sensor tabrakan fisik searah garis lurus kursor mouse
+            attackZone.body.setSize(JANGKAUAN * 1.2, JANGKAUAN * 1.2); 
+            attackZone.setPosition(
+                player.x + Math.cos(sudutRadian) * (JANGKAUAN / 1.5),
+                player.y + Math.sin(sudutRadian) * (JANGKAUAN / 1.5)
+            );
+
+            // Gambar busur setengah lingkaran luar tepat di hadapan arah bidik mouse
+            let sudutMulai = Phaser.Math.DegToRad(sudutDerajat - 90);
+            let sudutSelesai = Phaser.Math.DegToRad(sudutDerajat + 90);
+            
+            attackVisual.arc(player.x, player.y, JANGKAUAN, sudutMulai, sudutSelesai, false);
+            attackVisual.strokePath();
+
+            attackZone.body.enable = true;
+
+            // TIMER 1: Menghapus efek visual tebakan dan mematikan hitbox setelah 150 milidetik (biarkan tetap cepat)
+            this.time.delayedCall(150, () => {
+                attackVisual.clear();
+                attackZone.body.enable = false;
+            }, [], this);
+
+            // TIMER 2: GANTI/TAMBAHKAN BARIS INI UNTUK COOLDOWN SETENGAH DETIK (500 milidetik)
+            // Karakter baru bisa mengklik mouse kembali setelah 500 milidetik berlalu
+            this.time.delayedCall(500, () => {
+                isAttacking = false;
+            }, [], this);
+        }
+
+        tebasMusuh(zone, enemy) {
+            if (zone.body.embedded || enemy.getData('baruKenaTebas')) return;
+            
+            enemy.setData('baruKenaTebas', true);
+            enemy.scene.time.delayedCall(150, () => { if(enemy.active) enemy.setData('baruKenaTebas', false); });
+
+            let darahMusuh = enemy.getData('enemyHp') - 10;
+            enemy.setData('enemyHp', darahMusuh);
+
+            let tks = enemy.getData('hpTextObject');
+            if (tks) tks.setText(darahMusuh);
+
+            // --- AKTIFKAN STATUS KNOCKBACK PADA MUSUH ---
+            enemy.setData('sedangKnockback', true);
+
+            let sudut = Phaser.Math.Angle.Between(player.x, player.y, enemy.x, enemy.y);
+            enemy.setVelocityX(Math.cos(sudut) * 150); // Naikkan sedikit kekuatannya agar terasa mantap (300)
+            enemy.setVelocityY(Math.sin(sudut) * 150);
+
+            // TIMER: Setelah 200 milidetik, hentikan dorongan dan izinkan AI musuh mengejar player kembali
+            enemy.scene.time.delayedCall(200, () => {
+                if (enemy && enemy.active) {
+                    enemy.setData('sedangKnockback', false);
+                }
+            });
+
+            enemy.setTint(0xff0000);
+            enemy.scene.time.delayedCall(100, () => {
+                if (enemy && enemy.active) enemy.clearTint();
+            });
+
+            // --- LOGIKA KETIKA MUSUH MATI (SPAWN 2 MUSUH DI LUAR LAYAR) ---
+            if (darahMusuh <= 0) {
+                if (tks) tks.destroy();
+
+                // TAMBAHKAN DUA BARIS KODE INI UNTUK UPDATE SKOR:
+                skor += 10;
+                skorText.setText('SKOR: ' + skor);
+
+                // Ambil objek scene saat ini agar bisa memanggil fungsi Phaser di dalam fungsi mandiri
+                let scene = enemy.scene;
+
+                // Ambil data batas pandangan kamera saat ini
+                let kamera = scene.cameras.main;
+                
+                // Kita lakukan perulangan sebanyak 2 kali untuk melahirkan 2 musuh baru
+                for (let k = 0; k < 2; k++) {
+                    let spawnX, spawnY;
+                    let beradaDiDalamLayar = true;
+
+                    // Lakukan pengacakan koordinat terus-menerus sampai mendapatkan titik di luar layar kamera
+                    while (beradaDiDalamLayar) {
+                        spawnX = Phaser.Math.Between(200, MAP_WIDTH - 200);
+                        spawnY = Phaser.Math.Between(200, MAP_HEIGHT - 200);
+
+                        // Cek apakah koordinat acak tersebut masuk dalam area kotak yang sedang dilihat kamera
+                        let diDalamX = (spawnX >= kamera.worldView.x && spawnX <= kamera.worldView.x + kamera.worldView.width);
+                        let diDalamY = (spawnY >= kamera.worldView.y && spawnY <= kamera.worldView.y + kamera.worldView.height);
+
+                        // Jika koordinat TIDAK berada di dalam X dan Y kamera, berarti aman (di luar layar)
+                        if (!diDalamX || !diDalamY) {
+                            beradaDiDalamLayar = false; // Keluar dari loop pencarian koordinat
+                        }
+                    }
+
+                    // Lahirkan musuh baru di koordinat luar layar yang aman tadi
+                    let newEnemy = enemyGroup.create(spawnX, spawnY, 'musuh');
+                    newEnemy.setCollideWorldBounds(true);
+                    newEnemy.setDisplaySize(48, 64);
+                    newEnemy.body.setSize(24, 24);
+                    newEnemy.setBounce(0.2);
+                    newEnemy.setData('sedangCooldown', false);
+                    newEnemy.setData('enemyHp', 50);
+
+                    // --- TAMBAHKAN LINE INI JUGA UNTUK MUSUH BARU YANG RE-SPAWN ---
+                    let randomSpeedNew = Phaser.Math.Between(70, 150);
+                    newEnemy.setData('kecepatanKustom', randomSpeedNew);
+
+                    // Buat teks HP baru di atas kepala musuh baru
+                    let newEnemyHpText = scene.add.text(newEnemy.x, newEnemy.y - 40, '50', {
+                        fontSize: '12px',
+                        fill: '#ff0000',
+                        fontStyle: 'bold'
+                    });
+                    newEnemyHpText.setOrigin(0.5, 0.5);
+                    newEnemy.setData('hpTextObject', newEnemyHpText);
+                }
+                
+                // Hapus musuh yang lama dari permainan
+                enemyGroup.remove(enemy, true, true);
+            }
+        }
+    }
+
+    // --- SCENE 3: GAME OVER SCREEN ---
+    class SceneGameOver extends Phaser.Scene {
+        constructor() {
+            super({ key: 'SceneGameOver' });
+        }
+
+        create() {
+            const width = this.scale.width;
+            const height = this.scale.height;
+
+            this.pilihanIndex = 0;
+            this.terakhirPindahMundur = 0; 
+
+            this.add.text(width / 2, height / 2 - 100, 'GAME OVER', {
+                fontSize: '48px',
+                fill: '#ff0000',
+                fontStyle: 'bold',
+                fontFamily: 'Arial'
+            }).setOrigin(0.5);
+
+            this.add.text(width / 2, height / 2 - 30, 'SKOR AKHIR: ' + skor, {
+                fontSize: '24px',
+                fill: '#ffffff',
+                fontStyle: 'bold',
+                fontFamily: 'Arial'
+            }).setOrigin(0.5);
+
+            this.tombolUlang = this.add.text(width / 2, height / 2 + 40, 'MULAI ULANG', {
+                fontSize: '20px',
+                fill: '#00ffff',
+                fontStyle: 'bold',
+                fontFamily: 'Arial',
+                backgroundColor: '#333333',
+                padding: { x: 15, y: 8 }
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+            this.tombolMenu = this.add.text(width / 2, height / 2 + 100, 'KEMBALI KE MENU', {
+                fontSize: '20px',
+                fill: '#ffffff',
+                fontStyle: 'bold',
+                fontFamily: 'Arial',
+                backgroundColor: '#333333',
+                padding: { x: 15, y: 8 }
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+            // Event Mouse
+            this.tombolUlang.on('pointerover', () => { this.pilihanIndex = 0; this.updateVisualTombol(); });
+            this.tombolUlang.on('pointerdown', () => this.scene.start('SceneGame'));
+
+            this.tombolMenu.on('pointerover', () => { this.pilihanIndex = 1; this.updateVisualTombol(); });
+            this.tombolMenu.on('pointerdown', () => this.scene.start('SceneMenu'));
+
+            // --- LISTEN TOMBOL STIK (HANYA SATU BLOK SAJA, BERSIHKAN LISTENER SEBELUM PINDAH) ---
+            this.input.gamepad.on('down', (pad, button) => {
+                if (button.index === 1) { // Tombol B
+                    this.input.gamepad.removeAllListeners(); // Hapus listener saat ini agar tidak bocor ke scene tujuan
+                    if (this.pilihanIndex === 0) {
+                        this.scene.start('SceneGame');
+                    } else if (this.pilihanIndex === 1) {
+                        this.scene.start('SceneMenu');
+                    }
+                }
+            });
+
+            this.events.once('shutdown', () => {
+                this.input.gamepad.removeAllListeners();
+            });
+
+            this.updateVisualTombol();
+        }
+
+        updateVisualTombol() {
+            if (this.pilihanIndex === 0) {
+                this.tombolUlang.setStyle({ fill: '#ffffff', backgroundColor: '#00ffff' });
+                this.tombolMenu.setStyle({ fill: '#ffffff', backgroundColor: '#333333' });
+            } else {
+                this.tombolUlang.setStyle({ fill: '#00ffff', backgroundColor: '#333333' });
+                this.tombolMenu.setStyle({ fill: '#333333', backgroundColor: '#ffffff' });
+            }
+        }
+
+        update(time) {
+            let pad = this.input.gamepad.total ? this.input.gamepad.getPad(0) : null;
+            if (!pad) return;
+
+            let analogKananY = pad.axes[3].value;
+            const AMBANG_BATAS = 0.5;
+
+            // Logika navigasi naik turun menggunakan analog tetap di update
+            if (time > this.terakhirPindahMundur) {
+                if (analogKananY > AMBANG_BATAS) {
+                    this.pilihanIndex = 1;
+                    this.updateVisualTombol();
+                    this.terakhirPindahMundur = time + 250;
+                } else if (analogKananY < -AMBANG_BATAS) {
+                    this.pilihanIndex = 0;
+                    this.updateVisualTombol();
+                    this.terakhirPindahMundur = time + 250;
+                }
+            }
+            // Logika pengecekan tombol B di update() DIHAPUS TOTAL agar tidak bentrok
+        }
+    }
+
+    // --- SCENE 4: PAUSE SCREEN ---
+    class ScenePause extends Phaser.Scene {
+        constructor() {
+            super({ key: 'ScenePause' });
+        }
+
+        create() {
+            const width = this.scale.width;
+            const height = this.scale.height;
+
+            this.pilihanIndex = 0;
+            this.terakhirPindahMundur = 0;
+
+            // Membuat latar belakang hitam transparan agar game di belakangnya masih sedikit terlihat
+            this.add.rectangle(0, 0, width, height, 0x000000, 0.6).setOrigin(0);
+
+            // Teks Keterangan Pause & Skor Saat Ini
+            this.add.text(width / 2, height / 2 - 120, 'GAME PAUSED', {
+                fontSize: '40px',
+                fill: '#ffffff',
+                fontStyle: 'bold',
+                fontFamily: 'Arial'
+            }).setOrigin(0.5);
+
+            this.add.text(width / 2, height / 2 - 60, 'SKOR ANDA: ' + skor, {
+                fontSize: '20px',
+                fill: '#00ff00',
+                fontStyle: 'bold',
+                fontFamily: 'Arial'
+            }).setOrigin(0.5);
+
+            // Membuat Tombol Menu
+            this.tombolLanjut = this.add.text(width / 2, height / 2 + 20, 'LANJUTKAN', {
+                fontSize: '20px',
+                fill: '#ffffff',
+                fontStyle: 'bold',
+                fontFamily: 'Arial',
+                backgroundColor: '#333333',
+                padding: { x: 15, y: 8 }
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+            this.tombolMenu = this.add.text(width / 2, height / 2 + 80, 'KEMBALI KE MENU', {
+                fontSize: '20px',
+                fill: '#ffffff',
+                fontStyle: 'bold',
+                fontFamily: 'Arial',
+                backgroundColor: '#333333',
+                padding: { x: 15, y: 8 }
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+            // Navigasi Menggunakan Mouse
+            this.tombolLanjut.on('pointerover', () => { this.pilihanIndex = 0; this.updateVisualTombol(); });
+            this.tombolLanjut.on('pointerdown', () => this.bukaKembaliGame());
+
+            this.tombolMenu.on('pointerover', () => { this.pilihanIndex = 1; this.updateVisualTombol(); });
+            this.tombolMenu.on('pointerdown', () => this.keluarKeMenuUtama());
+
+            // Navigasi Gamepad (Sistem Sekali Tekan)
+            this.input.gamepad.on('down', (pad, button) => {
+                
+                // 1. Logika Eksekusi Tombol B (Konfirmasi Pilihan)
+                if (button.index === 1) { 
+                    if (this.pilihanIndex === 0) {
+                        // PERBAIKAN: Pastikan namanya 'bukaKembaliGame', bukan 'bukaKemulaiGame'
+                        this.bukaKembaliGame();
+                    } else if (this.pilihanIndex === 1) {
+                        // PERBAIKAN: Bersihkan listener secara instan SEBELUM pindah scene
+                        this.input.gamepad.removeAllListeners();
+                        this.keluarKeMenuUtama();
+                    }
+                }
+                
+                // 2. Logika Eksekusi Tombol Menu/Start (Toggle Kembali ke Game)
+                if (button.index === 9) {
+                    if (this.time.now - this.sys.settings.data.timeStarted > 300) {
+                        this.bukaKembaliGame();
+                    }
+                }
+            });
+
+            // Pengaman pembersihan listener stik saat scene ditutup
+            this.events.once('shutdown', () => {
+                this.input.gamepad.removeAllListeners();
+            });
+
+            this.updateVisualTombol();
+            
+            // --- TAMBAHKAN REGISTER TOMBOL ESC DI SINI ---
+            this.tombolEsc = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+
+            // Pengaman pembersihan listener stik saat scene ditutup
+            this.events.once('shutdown', () => {
+                this.input.gamepad.removeAllListeners();
+            });
+
+            this.updateVisualTombol();
+        }
+
+        updateVisualTombol() {
+            if (this.pilihanIndex === 0) {
+                this.tombolLanjut.setStyle({ fill: '#ffffff', backgroundColor: '#00ffff' });
+                this.tombolMenu.setStyle({ fill: '#ffffff', backgroundColor: '#333333' });
+            } else {
+                this.tombolLanjut.setStyle({ fill: '#ffffff', backgroundColor: '#333333' });
+                this.tombolMenu.setStyle({ fill: '#333333', backgroundColor: '#ffffff' });
+            }
+        }
+
+        bukaKembaliGame() {
+            // Bersihkan seluruh listener gamepad milik scene pause terlebih dahulu
+            this.input.gamepad.removeAllListeners();
+            
+            // Tutup scene pause ini, lalu bangunkan kembali SceneGame
+            this.scene.stop();
+            this.scene.resume('SceneGame');
+        }
+
+        keluarKeMenuUtama() {
+            // Matikan scene pause, matikan total scene game yang sedang berjalan, lalu buka menu utama
+            this.scene.stop();
+            this.scene.stop('SceneGame');
+            this.scene.start('SceneMenu');
+        }
+
+        update(time) {
+            // --- 1. CEK APABILA TOMBOL ESC KEYBOARD DITEKAN ---
+            if (Phaser.Input.Keyboard.JustDown(this.tombolEsc)) {
+                this.bukaKembaliGame();
+                return;
+            }
+
+            let pad = this.input.gamepad.total ? this.input.gamepad.getPad(0) : null;
+            if (!pad) return;
+
+            let analogKananY = pad.axes[3].value;
+            const AMBANG_BATAS = 0.5;
+
+            if (time > this.terakhirPindahMundur) {
+                if (analogKananY > AMBANG_BATAS) {
+                    this.pilihanIndex = 1;
+                    this.updateVisualTombol();
+                    this.terakhirPindahMundur = time + 250;
+                } else if (analogKananY < -AMBANG_BATAS) {
+                    this.pilihanIndex = 0;
+                    this.updateVisualTombol();
+                    this.terakhirPindahMundur = time + 250;
+                }
+            }
+        }
+    }
+
+    // --- SIKLUS UTAMA ENGINE ---
+    const config = {
+        type: Phaser.AUTO,
+        scale: {
+            mode: Phaser.Scale.RESIZE, 
+            parent: 'body',
+            width: '100%',
+            height: '100%'
+        },
+        input: { gamepad: true },
+        physics: {
+            default: 'arcade', 
+            arcade: { debug: false }
+        },
+        scene: [SceneMenu, SceneGame, SceneGameOver, ScenePause]
+    };
+
+    const game = new Phaser.Game(config);
+    const MAP_WIDTH = 3000;
+    const MAP_HEIGHT = 2000;
+
+    let player;
+    let cursors;
+    let batuGroup;
+    let enemyGroup;
+    let wasd; // Variabel baru untuk menampung tombol WASD
+
+    let skor = 0;       // Nilai skor awal game
+    let skorText;       // Tempat menyimpan objek teks UI skor
+
+    // --- VARIABEL NYAWA BARU ---
+    let hp = 60;    // Jumlah nyawa awal karakter
+    let hpText;      // Tempat menyimpan objek teks UI di layar// 
+    
+    // --- VARIABEL COOLDOWN BARU ---
+    let isKnockback = false;
+
+    let spaceKey;       // Menampung tombol Spasi
+    let attackZone;     // Sensor hitbox serangan gaib
+    let attackVisual;   // Efek visual setengah lingkaran
+    let isAttacking = false; // Status apakah sedang mengayunkan senjata
+
+    let arahTerakhir = 'kanan'; // Pilihan: 'kiri', 'kanan', 'atas', 'bawah'
+
+    // --- VARIABEL ATURAN MUSUH (Bisa Anda ubah sesuai selera) ---
+    const KECEPATAN_MUSUH = 100;   // Kecepatan lari musuh saat mengejar
+    const RADIUS_DETEKSI = 320;     // Jarak radius (dalam piksel) musuh mulai mendeteksi player
+    const JUMLAH_SPAWN_TITIK = 50;  // Berapa banyak lokasi kelompok musuh yang mau disebar di map
+
+    // --- CONFIG JANGKAUAN SERANGAN PLAYER ---
+    const JANGKAUAN_SERANGAN = 50; // Ubah angka piksel ini untuk mengatur seberapa jauh tebasannya
+
+    // --- FUNGSI ASISTEN UNTUK MENGHITUNG ARAH DORONGAN ---
+    function bikinKnockback(player, enemy, kekuatan) {
+        // Hitung sudut arah dari musuh ke posisi player
+        let sudut = Phaser.Math.Angle.Between(enemy.x, enemy.y, player.x, player.y);
+        
+        // Tembakkan kecepatan fisika player ke arah berlawanan dari posisi musuh
+        player.setVelocityX(Math.cos(sudut) * kekuatan);
+        player.setVelocityY(Math.sin(sudut) * kekuatan);
+    }
+</script>
+
+</body>
+</html>
