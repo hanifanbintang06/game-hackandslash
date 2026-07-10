@@ -97,7 +97,7 @@
             batuGroup = this.physics.add.staticGroup();
 
             // ATUR JUMLAH BATU DI SINI (Ubah angka ini sesuai selera Anda)
-            const JUMLAH_BATU = 200; 
+            const JUMLAH_BATU = 400; 
 
             for (let i = 0; i < JUMLAH_BATU; i++) {
                 // Mengacak posisi X dan Y di sepanjang ukuran MAP_WIDTH dan MAP_HEIGHT
@@ -194,31 +194,43 @@
 
             background.setTileScale(0.2, 0.2);
 
-            // 1. Ambil koordinat pojok kiri atas dari sudut pandang kamera saat ini
-            const kordinatX = this.cameras.main.scrollX - 120;
-            const kordinatY = this.cameras.main.scrollY - 230;
-
-            // 2. Buat teks menggunakan koordinat kamera tersebut
-            hpText = this.add.text(kordinatX, kordinatY, 'HP: ' + hp, {
-                fontSize: '16px',
-                fill: '#000000', // Warna kuning (paling kontras dan gampang kelihatan)
+            // =================================================================
+            // --- PERBAIKAN TOTAL: UI LAYER MENGGUNAKAN CONTAINER KEBAL ZOOM ---
+            // =================================================================
+            
+            // 1. Buat objek teks langsung di koordinat lokal (Pojok Kiri Atas = 20, 20)
+            // Warna fill diganti ke putih (#ffffff) agar kontras dengan background gelap
+            hpText = this.add.text(20, 20, 'HP: ' + hp, {
+                fontSize: '48px',
+                fill: '#ffffff', 
                 fontStyle: 'bold',
                 fontFamily: 'Arial'
             });
 
-            hpText.setScrollFactor(0);
-            hpText.setDepth(999);
-
-            // Buat teks skor tepat berada di bawah posisi teks HP
-            skorText = this.add.text(kordinatX, kordinatY + 25, 'SKOR: ' + skor, {
-                fontSize: '16px',
-                fill: '#000000', // Warna putih
+            skorText = this.add.text(20, 80, 'SKOR: ' + skor, {
+                fontSize: '48px',
+                fill: '#ffffff', 
                 fontStyle: 'bold',
                 fontFamily: 'Arial'
             });
 
-            skorText.setScrollFactor(0);
-            skorText.setDepth(999);
+            // 2. Wadahi kedua teks tersebut ke dalam sebuah Container
+            let uiContainer = this.add.container(0, 0, [hpText, skorText]);
+            
+            // Kunci posisi container agar mengambang statis di layar monitor
+            uiContainer.setScrollFactor(0);
+            uiContainer.setDepth(999);
+
+            // 3. KUNCI UTAMA: Kalikan skala container secara terbalik dengan nilai zoom kamera
+            // Jika kamera diperbesar 2.5x, container kita perkecil (1 / 2.5) agar ukurannya tetap 1x di layar
+            let faktorZoom = 2.5;
+            uiContainer.setScale(1 / faktorZoom);
+
+            // Sesuaikan posisi container ke pojok kiri atas area pandang kamera yang menciut
+            uiContainer.setPosition(
+                (this.scale.width / 2) * (1 - 1 / faktorZoom),
+                (this.scale.height / 2) * (1 - 1 / faktorZoom)
+            );
 
             // Hapus registrasi spaceKey lama, ganti dengan listen klik mouse:
             this.input.on('pointerdown', (pointer) => {
@@ -462,19 +474,13 @@
             let menggunakanStikUntukMelihat = pad && (Math.abs(pad.axes[2].value) > 0.1 || Math.abs(pad.axes[3].value) > 0.1);
 
             if (menggunakanStikUntukMelihat) {
-                // Hitung sudut berdasarkan koordinat sumbu X (axes[2]) dan Y (axes[3]) dari analog kanan stik
                 sudutRadian = Math.atan2(pad.axes[3].value, pad.axes[2].value);
             } else {
-                // Jika stik diam, gunakan sudut dari posisi player ke kursor mouse
                 sudutRadian = Phaser.Math.Angle.Between(player.x, player.y, pointer.worldX, pointer.worldY);
             }
 
             let sudutDerajat = Phaser.Math.RadToDeg(sudutRadian);
             isAttacking = true;
-
-            attackVisual.clear();
-            attackVisual.lineStyle(4, 0xffffff, 0.8);
-            attackVisual.beginPath();
 
             // Menggeser letak sensor tabrakan fisik searah garis lurus kursor mouse
             attackZone.body.setSize(JANGKAUAN * 1.2, JANGKAUAN * 1.2); 
@@ -483,23 +489,97 @@
                 player.y + Math.sin(sudutRadian) * (JANGKAUAN / 1.5)
             );
 
-            // Gambar busur setengah lingkaran luar tepat di hadapan arah bidik mouse
-            let sudutMulai = Phaser.Math.DegToRad(sudutDerajat - 90);
-            let sudutSelesai = Phaser.Math.DegToRad(sudutDerajat + 90);
+            // =================================================================
+            // --- IMPLEMENTASI ANIMASI SWIPE/SLIDE SABIT PUTIH ---
+            // =================================================================
             
-            attackVisual.arc(player.x, player.y, JANGKAUAN, sudutMulai, sudutSelesai, false);
-            attackVisual.strokePath();
+            // Definisikan batas busur serangan (70 derajat ke kanan dan 70 derajat ke kiri)
+            // Karena ayunan dimulai dari KANAN ke KIRI sudut pandang karakter, 
+            // maka sudut awal dimulai dari (+70) menuju (-70)
+            let sudutMulaiAsal = sudutDerajat + 70;
+            let TOTAL_AYUNAN = 140; 
+
+            // Buat objek penampung data tween untuk animasi
+            let efekSlash = {
+                progress: 0, // 0 artinya baru mulai di ujung kanan, 1 artinya penuh sampai ujung kiri
+                alpha: 1     // Nilai transparansi untuk efek fade out
+            };
 
             attackZone.body.enable = true;
 
-            // TIMER 1: Menghapus efek visual tebakan dan mematikan hitbox setelah 150 milidetik (biarkan tetap cepat)
-            this.time.delayedCall(150, () => {
-                attackVisual.clear();
-                attackZone.body.enable = false;
-            }, [], this);
+            // Jalankan Tween untuk memanipulasi progress gambar sabitan secara realtime
+            this.tweens.add({
+                targets: efekSlash,
+                progress: 1,           // Selama 120ms, kembangkan busur sabit hingga penuh
+                duration: 120,
+                ease: 'Quad.easeOut',
+                onUpdate: () => {
+                    attackVisual.clear();
+                    
+                    // Sesuai permintaan: Ubah warna menjadi murni PUTIH (0xffffff)
+                    attackVisual.fillStyle(0xffffff, efekSlash.alpha * 0.7);
+                    attackVisual.lineStyle(1, 0xffffff, efekSlash.alpha);
 
-            // TIMER 2: GANTI/TAMBAHKAN BARIS INI UNTUK COOLDOWN SETENGAH DETIK (500 milidetik)
-            // Karakter baru bisa mengklik mouse kembali setelah 500 milidetik berlalu
+                    let kumpulanTitik = [];
+                    
+                    // Hitung seberapa jauh sudut yang sudah ditempuh saat ini
+                    let cakupanSudutAktif = TOTAL_AYUNAN * efekSlash.progress;
+                    let sudutSelesaiSeketika = sudutMulaiAsal - cakupanSudutAktif;
+
+                    // 1. Gambar busur luar yang bergerak memanjang ke kiri
+                    for (let a = sudutMulaiAsal; a >= sudutSelesaiSeketika; a -= 5) {
+                        let rad = Phaser.Math.DegToRad(a);
+                        let x = player.x + Math.cos(rad) * JANGKAUAN;
+                        let y = player.y + Math.sin(rad) * JANGKAUAN;
+                        kumpulanTitik.push(new Phaser.Geom.Point(x, y));
+                    }
+
+                    // 2. Gambar busur dalam (pembentuk efek sabit tebal di tengah)
+                    for (let a = sudutSelesaiSeketika; a <= sudutMulaiAsal; a += 5) {
+                        let rad = Phaser.Math.DegToRad(a);
+                        
+                        // Ketebalan dinamis mengikuti kurva sinus terhadap porsi sudut yang aktif berjalan
+                        let faktorKetebalan = Math.sin(Phaser.Math.DegToRad(a - sudutSelesaiSeketika) * (180 / Math.max(cakupanSudutAktif, 1))) * 0.35;
+                        let jarakDalam = JANGKAUAN * (1 - faktorKetebalan);
+
+                        let x = player.x + Math.cos(rad) * jarakDalam;
+                        let y = player.y + Math.sin(rad) * jarakDalam;
+                        kumpulanTitik.push(new Phaser.Geom.Point(x, y));
+                    }
+
+                    // Render poligon sabit ke canvas game jika sudah ada titik koordinatnya
+                    if (kumpulanTitik.length > 0) {
+                        attackVisual.fillPoints(kumpulanTitik, true, true);
+                        
+                        // Gambar garis tajam luar
+                        attackVisual.beginPath();
+                        let radMulai = Phaser.Math.DegToRad(sudutMulaiAsal);
+                        let radSelesai = Phaser.Math.DegToRad(sudutSelesaiSeketika);
+                        attackVisual.arc(player.x, player.y, JANGKAUAN, radMulai, radSelesai, true);
+                        attackVisual.strokePath();
+                    }
+                },
+                onComplete: () => {
+                    // --- TWEEN KEDUA: EFEK FADE OUT (MENGHILANG PERLAHAN) ---
+                    // Setelah sabit terbentuk sempurna (full), pudarkan alpha-nya ke 0 dalam 80ms
+                    this.tweens.add({
+                        targets: efekSlash,
+                        alpha: 0,
+                        duration: 200,
+                        onUpdate: () => {
+                            // Terapkan sisa render visual terakhir dengan opasitas alpha yang menurun
+                            attackVisual.setAlpha(efekSlash.alpha);
+                        },
+                        onComplete: () => {
+                            attackVisual.clear();
+                            attackVisual.setAlpha(1); // Reset alpha default komponen grafis
+                            attackZone.body.enable = false;
+                        }
+                    });
+                }
+            });
+
+            // TIMER COOLDOWN SERANGAN (Tetap setengah detik sebelum bisa input tebas lagi)
             this.time.delayedCall(500, () => {
                 isAttacking = false;
             }, [], this);
@@ -872,8 +952,8 @@
     };
 
     const game = new Phaser.Game(config);
-    const MAP_WIDTH = 3000;
-    const MAP_HEIGHT = 2000;
+    const MAP_WIDTH = 6000;
+    const MAP_HEIGHT = 4000;
 
     let player;
     let cursors;
@@ -901,7 +981,7 @@
     // --- VARIABEL ATURAN MUSUH (Bisa Anda ubah sesuai selera) ---
     const KECEPATAN_MUSUH = 100;   // Kecepatan lari musuh saat mengejar
     const RADIUS_DETEKSI = 320;     // Jarak radius (dalam piksel) musuh mulai mendeteksi player
-    const JUMLAH_SPAWN_TITIK = 50;  // Berapa banyak lokasi kelompok musuh yang mau disebar di map
+    const JUMLAH_SPAWN_TITIK = 100;  // Berapa banyak lokasi kelompok musuh yang mau disebar di map
 
     // --- CONFIG JANGKAUAN SERANGAN PLAYER ---
     const JANGKAUAN_SERANGAN = 50; // Ubah angka piksel ini untuk mengatur seberapa jauh tebasannya
