@@ -86,44 +86,18 @@
             isKnockback = false;
             isAttacking = false;
 
-            // --- TAMBAHKAN BLOK KODE INI ---
-            this.sudutBidikanTerakhir = 0;
-            this.isDashing = false;
-            this.isAimingSkill = false;
-            this.waktuMulaiTekanSkill = 0;
-            
-            // Registrasi tombol E untuk Keyboard
-            this.tombolSkill = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
-
-            // Objek grafis khusus untuk menggambar garis indikator
-            this.indikatorSkill = this.add.graphics();
-            this.indikatorSkill.setDepth(997);
-
-            // --- BLOK KODE STATE SKILL DASH & INDIKATOR ---
-            this.sudutBidikanTerakhir = 0;
-            this.isDashing = false;
-            this.isAimingSkill = false;
-            this.waktuMulaiTekanSkill = 0;
-            
-            // --- TAMBAHKAN LINE INI: Menandakan status kesiapan skill ---
-            this.skillBisaDigunakan = true; 
-            
-            this.tombolSkill = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
-            this.indikatorSkill = this.add.graphics();
-            this.indikatorSkill.setDepth(997);
-
             this.sudutBidikanTerakhir = 0;
             this.isDashing = false;
             this.isAimingSkill = false;
             this.waktuMulaiTekanSkill = 0;
             this.skillBisaDigunakan = true;
-            
-            // --- VARIABEL BARU UNTUK MEKANIK RESTART COOLDOWN ---
-            this.waktuSelesaiCooldown = 0; 
+            this.waktuSelesaiCooldown = 0;
             this.timerSelesaiBilasTanda = null;
-
-            // --- TAMBAHKAN LINE INI: Mencatat milestone waktu berakhirnya darah biru ---
             this.waktuSelesaiDarahBiru = 0;
+
+            this.tombolSkill = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+            this.indikatorSkill = this.add.graphics();
+            this.indikatorSkill.setDepth(997);
 
             // 1. Mengatur batas luas dunia game agar karakter tidak bisa jalan menembus batas map
             this.physics.world.setBounds(0, 0, MAP_WIDTH, MAP_HEIGHT);
@@ -184,8 +158,11 @@
                 right: Phaser.Input.Keyboard.KeyCodes.D
             });
 
-            // 2. Logika memunculkan musuh secara acak dalam kelompok (2-4 musuh sekaligus)
-            // PASTIKAN STRUKTUR FOR UTAMA INI ADA KEMBALI
+            // =================================================================
+            // --- REVISI: AMBIL REFERENSI KAMERA UTAMA UNTUK MENCEGAH INFINITE LOOP ---
+            // =================================================================
+            let kameraUtama = this.cameras.main; 
+
             for (let i = 0; i < JUMLAH_SPAWN_TITIK; i++) {
                 let pusatX = Phaser.Math.Between(200, MAP_WIDTH - 200);
                 let pusatY = Phaser.Math.Between(200, MAP_HEIGHT - 200);
@@ -194,27 +171,23 @@
                 for (let j = 0; j < jumlahMusuhDiTitikIni; j++) {
                     let spawnX = pusatX + Phaser.Math.Between(-40, 40);
                     let spawnY = pusatY + Phaser.Math.Between(-40, 40);
+                    let beradaDiDalamLayar = true;
 
-                    let enemy = enemyGroup.create(spawnX, spawnY, 'musuh');
-                    enemy.setCollideWorldBounds(true);
-                    enemy.setDisplaySize(48, 64);
-                    enemy.body.setSize(24, 24);
-                    enemy.setBounce(0.2); 
-                    enemy.setData('sedangCooldown', false); 
-                    enemy.setData('enemyHp', 50); 
+                    while (beradaDiDalamLayar) { // <--- AWAL TRAP LOOPING TANPA BATAS
+                        spawnX = Phaser.Math.Between(200, MAP_WIDTH - 200);
+                        spawnY = Phaser.Math.Between(200, MAP_HEIGHT - 200);
 
-                    // --- TAMBAHKAN LINE INI: Mengacak kecepatan musuh antara 70 sampai 150 ---
-                    // Anda bisa mengubah rentang angka (70, 150) ini sesuai keinginan
-                    let randomSpeed = Phaser.Math.Between(70, 150);
-                    enemy.setData('kecepatanKustom', randomSpeed);
+                        // MASALAH KRUSIAL: Variabel "kameraUtama" membaca properti .worldView dari objek yang tidak valid / tidak sinkron pada frame pertama create()
+                        let diDalamX = (spawnX >= kameraUtama.worldView.x && spawnX <= kameraUtama.worldView.x + kameraUtama.worldView.width);
+                        let diDalamY = (spawnY >= kameraUtama.worldView.y && spawnY <= kameraUtama.worldView.y + kameraUtama.worldView.height);
 
-                    let enemyHpText = this.add.text(enemy.x, enemy.y - 40, '50', {
-                        fontSize: '12px',
-                        fill: '#ff0000',
-                        fontStyle: 'bold'
-                    });
-                    enemyHpText.setOrigin(0.5, 0.5);
-                    enemy.setData('hpTextObject', enemyHpText);
+                        if (!diDalamX || !diDalamY) {
+                            beradaDiDalamLayar = false; // <--- Sinyal ini tidak pernah terpicu!
+                        }
+                    } // <--- AKHIR TRAP
+
+                    let tipeDipilih = (Phaser.Math.Between(1, 100) <= 80) ? 'kroco' : 'elite';
+                    this.bikinMusuh(spawnX, spawnY, tipeDipilih);
                 }
             }
 
@@ -413,38 +386,32 @@
                 this.eksekusiSerangan();
             }
 
-            // --- LOGIKA AI MUSUH MENGEJAR KARAKTER ---
+            // --- LOGIKA AI MUSUH TERPUSAT & DINAMIS ---
             enemyGroup.getChildren().forEach((enemy) => {
-                
-                // Tambahkan pengecekan ini: Jika musuh sedang kedorong, abaikan fungsi kejar
                 if (enemy.getData('sedangKnockback')) {
-                    // Berikan efek friksi/perlambatan bertahap selama kedorong agar gerakannya halus
                     enemy.setVelocityX(enemy.body.velocity.x * 0.9);
                     enemy.setVelocityY(enemy.body.velocity.y * 0.9);
                     
-                    // Update posisi teks HP di atas kepalanya saat kedorong
                     let tks = enemy.getData('hpTextObject');
                     if (tks) tks.setPosition(enemy.x, enemy.y - 40);
-                    return; // Lewati sisa kode kejar di bawah
+                    return; 
                 }
 
                 let jarak = Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y);
+                
+                // Membaca jarak deteksi dan kecepatan unik milik masing-masing musuh dari memori data
+                let batasDeteksi = enemy.getData('radiusDeteksi');
+                let speedMusuh = enemy.getData('kecepatanKustom');
 
-                if (jarak < RADIUS_DETEKSI) {
-                    this.physics.moveToObject(enemy, player, KECEPATAN_MUSUH);
-                    if (player.x < enemy.x) {
-                        enemy.setFlipX(true);  
-                    } else {
-                        enemy.setFlipX(false); 
-                    }
+                if (jarak < batasDeteksi) {
+                    this.physics.moveToObject(enemy, player, speedMusuh);
+                    enemy.setFlipX(player.x < enemy.x);
                 } else {
                     enemy.setVelocity(0);
                 }
                 
                 let tks = enemy.getData('hpTextObject');
-                if (tks) {
-                    tks.setPosition(enemy.x, enemy.y - 40);
-                }
+                if (tks) tks.setPosition(enemy.x, enemy.y - 40);
             });
 
             // =================================================================
@@ -521,7 +488,7 @@
                     this.cdText.setStyle({ fill: '#888888' });
                 }
             }
-        }
+        } 
 
         // --- TARUH METHOD PAUSE MANDIRI ANDA DI SINI (DI LUAR UPDATE) ---
         pemicuPause() {
@@ -541,21 +508,16 @@
                 return;
             }
 
-            // 2. PROSES DAMAGE (Karena musuh ini sedang tidak cooldown)
-            hp -= 10;
+            // Ambil damage unik dari musuh yang menabrak!
+            let besarDamage = enemy.getData('damageSerangan');
+            hp -= besarDamage;
             hpText.setText('HP: ' + hp);
             
-            // Aktifkan cooldown khusus untuk MUSUH INI SAJA
             enemy.setData('sedangCooldown', true);
-            
-            // Status knockback player tetap aktif agar keyboard terkunci 0.2 detik
             isKnockback = true; 
             bikinKnockback(player, enemy, 400); 
 
-            // TIMER KNOCKBACK PLAYER (0.2 detik lepas kontrol keyboard)
-            this.time.delayedCall(200, () => {
-                isKnockback = false; 
-            }, [], this);
+            this.time.delayedCall(200, () => { isKnockback = false; }, [], this);
 
             // 3. --- EFEK KEDIP MERAH INSTAN SAAT KENA HIT ---
             player.setTint(0xff0000); 
@@ -730,15 +692,11 @@
             // =================================================================
             // --- PERBAIKAN 4: BONUS DAMAGE SEPEREMPAT PERSEN (25%) SAAT COOLDOWN DARAH BIRU AKTIF ---
             // =================================================================
-            let baseDamage = 8; // Damage pedang standar asli Anda
-            
-            // Cek apakah ada efek darah biru yang masih berjalan aktif di map saat ini
+            let baseDamage = 8;
             let adaDarahBiruAktif = enemyGroup.getChildren().some(e => e.getData('statusTandaBiru') === true);
-            
-            // Jika aktif, damage naik 25% (seperempat persen dari base damage: 8 + 2 = 10 damage)
             let damageAkhir = adaDarahBiruAktif ? (baseDamage * 1.25) : baseDamage;
 
-            let darahMusuh = enemy.getData('enemyHp') - 8;
+            let darahMusuh = enemy.getData('enemyHp') - damageAkhir;   // <- pakai damageAkhir
             enemy.setData('enemyHp', darahMusuh);
 
             // =================================================================
@@ -772,60 +730,35 @@
             if (darahMusuh <= 0) {
                 if (tks) tks.destroy();
 
-                // TAMBAHKAN DUA BARIS KODE INI UNTUK UPDATE SKOR:
                 skor += 10;
                 skorText.setText('SKOR: ' + skor);
 
-                // Ambil objek scene saat ini agar bisa memanggil fungsi Phaser di dalam fungsi mandiri
                 let scene = enemy.scene;
-
-                // Ambil data batas pandangan kamera saat ini
                 let kamera = scene.cameras.main;
                 
-                // Kita lakukan perulangan sebanyak 2 kali untuk melahirkan 2 musuh baru
+                // =============================================================
+                // --- REVISI: BLOK RESPAWN BERSIH PADA TEBASMUSUH ---
+                // =============================================================
                 for (let k = 0; k < 2; k++) {
                     let spawnX, spawnY;
                     let beradaDiDalamLayar = true;
 
-                    // Lakukan pengacakan koordinat terus-menerus sampai mendapatkan titik di luar layar kamera
                     while (beradaDiDalamLayar) {
                         spawnX = Phaser.Math.Between(200, MAP_WIDTH - 200);
                         spawnY = Phaser.Math.Between(200, MAP_HEIGHT - 200);
 
-                        // Cek apakah koordinat acak tersebut masuk dalam area kotak yang sedang dilihat kamera
                         let diDalamX = (spawnX >= kamera.worldView.x && spawnX <= kamera.worldView.x + kamera.worldView.width);
                         let diDalamY = (spawnY >= kamera.worldView.y && spawnY <= kamera.worldView.y + kamera.worldView.height);
 
-                        // Jika koordinat TIDAK berada di dalam X dan Y kamera, berarti aman (di luar layar)
                         if (!diDalamX || !diDalamY) {
-                            beradaDiDalamLayar = false; // Keluar dari loop pencarian koordinat
+                            beradaDiDalamLayar = false; 
                         }
                     }
 
-                    // Lahirkan musuh baru di koordinat luar layar yang aman tadi
-                    let newEnemy = enemyGroup.create(spawnX, spawnY, 'musuh');
-                    newEnemy.setCollideWorldBounds(true);
-                    newEnemy.setDisplaySize(48, 64);
-                    newEnemy.body.setSize(24, 24);
-                    newEnemy.setBounce(0.2);
-                    newEnemy.setData('sedangCooldown', false);
-                    newEnemy.setData('enemyHp', 50);
-
-                    // --- TAMBAHKAN LINE INI JUGA UNTUK MUSUH BARU YANG RE-SPAWN ---
-                    let randomSpeedNew = Phaser.Math.Between(70, 150);
-                    newEnemy.setData('kecepatanKustom', randomSpeedNew);
-
-                    // Buat teks HP baru di atas kepala musuh baru
-                    let newEnemyHpText = scene.add.text(newEnemy.x, newEnemy.y - 40, '50', {
-                        fontSize: '12px',
-                        fill: '#ff0000',
-                        fontStyle: 'bold'
-                    });
-                    newEnemyHpText.setOrigin(0.5, 0.5);
-                    newEnemy.setData('hpTextObject', newEnemyHpText);
+                    let tipeRespawn = (Phaser.Math.Between(1, 100) <= 85) ? 'kroco' : 'elite';
+                    scene.bikinMusuh(spawnX, spawnY, tipeRespawn);
                 }
                 
-                // Hapus musuh yang lama dari permainan
                 enemyGroup.remove(enemy, true, true);
             }
         }
@@ -1106,6 +1039,40 @@
                     teksDamage.destroy(); // Hancurkan objek dari memori setelah selesai
                 }
             });
+        }
+    
+        bikinMusuh(x, y, tipe) {
+            // Ambil data spesifikasi dari kamus profil, jika tidak ada gunakan default kroco
+            const spek = PROFIL_MUSUH[tipe] || PROFIL_MUSUH['kroco'];
+
+            let enemy = enemyGroup.create(x, y, spek.texture);
+            enemy.setCollideWorldBounds(true);
+            enemy.setDisplaySize(48, 64);
+            enemy.body.setSize(24, 24);
+            enemy.setBounce(0.2);
+
+            // --- SUNTIKKAN STATS SECARA TERPISAH KE MEMORI INTERNAL ---
+            enemy.setData({
+                'tipe': tipe,
+                'enemyHp': spek.hpMax,
+                'kecepatanKustom': spek.kecepatan,
+                'radiusDeteksi': spek.radiusDeteksi,
+                'damageSerangan': spek.damage,
+                'poinSkor': spek.skorPoin,
+                'sedangCooldown': false,
+                'sedangKnockback': false
+            });
+
+            // Pembuatan Teks HP dinamis mengikuti kustomisasi warna profil
+            let enemyHpText = this.add.text(enemy.x, enemy.y - 40, spek.hpMax.toString(), {
+                fontSize: '12px',
+                fill: spek.warnaTeks,
+                fontStyle: 'bold'
+            });
+            enemyHpText.setOrigin(0.5, 0.5);
+            enemy.setData('hpTextObject', enemyHpText);
+
+            return enemy;
         }
     }
 
@@ -1418,19 +1385,6 @@
     // --- CONFIG JANGKAUAN SERANGAN PLAYER ---
     const JANGKAUAN_SERANGAN = 50; // Ubah angka piksel ini untuk mengatur seberapa jauh tebasannya
 
-    // =================================================================
-    // --- DEKLARASI STATE SKILL DASH & INDIKATOR ---
-    // =================================================================
-    this.isDashing = false;
-    this.isAimingSkill = false;
-    
-    // Registrasi tombol E untuk Keyboard
-    this.tombolSkill = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
-
-    // Objek grafis khusus untuk menggambar garis/panah indikator bidikan dash
-    this.indikatorSkill = this.add.graphics();
-    this.indikatorSkill.setDepth(997); // Di bawah efek tebasan pedang
-
     // --- FUNGSI ASISTEN UNTUK MENGHITUNG ARAH DORONGAN ---
     function bikinKnockback(player, enemy, kekuatan) {
         // Hitung sudut arah dari musuh ke posisi player
@@ -1440,6 +1394,28 @@
         player.setVelocityX(Math.cos(sudut) * kekuatan);
         player.setVelocityY(Math.sin(sudut) * kekuatan);
     }
+
+    // --- REGISTER DATA JENIS-JENIS MUSUH (SANGAT MUDAH DITAMBAH) ---
+    const PROFIL_MUSUH = {
+        'kroco': {
+            texture: 'musuh',
+            hpMax: 40,
+            kecepatan: 100,
+            radiusDeteksi: 300,
+            damage: 10,
+            warnaTeks: '#ff0000',
+            skorPoin: 10
+        },
+        'elite': {
+            texture: 'musuh', // Nanti bisa diganti key texture gambar lain
+            hpMax: 120,
+            kecepatan: 140,
+            radiusDeteksi: 450,
+            damage: 20,
+            warnaTeks: '#ffaa00',
+            skorPoin: 30
+        }
+    };
 </script>
 
 </body>
