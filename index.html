@@ -86,6 +86,45 @@
             isKnockback = false;
             isAttacking = false;
 
+            // --- TAMBAHKAN BLOK KODE INI ---
+            this.sudutBidikanTerakhir = 0;
+            this.isDashing = false;
+            this.isAimingSkill = false;
+            this.waktuMulaiTekanSkill = 0;
+            
+            // Registrasi tombol E untuk Keyboard
+            this.tombolSkill = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+
+            // Objek grafis khusus untuk menggambar garis indikator
+            this.indikatorSkill = this.add.graphics();
+            this.indikatorSkill.setDepth(997);
+
+            // --- BLOK KODE STATE SKILL DASH & INDIKATOR ---
+            this.sudutBidikanTerakhir = 0;
+            this.isDashing = false;
+            this.isAimingSkill = false;
+            this.waktuMulaiTekanSkill = 0;
+            
+            // --- TAMBAHKAN LINE INI: Menandakan status kesiapan skill ---
+            this.skillBisaDigunakan = true; 
+            
+            this.tombolSkill = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+            this.indikatorSkill = this.add.graphics();
+            this.indikatorSkill.setDepth(997);
+
+            this.sudutBidikanTerakhir = 0;
+            this.isDashing = false;
+            this.isAimingSkill = false;
+            this.waktuMulaiTekanSkill = 0;
+            this.skillBisaDigunakan = true;
+            
+            // --- VARIABEL BARU UNTUK MEKANIK RESTART COOLDOWN ---
+            this.waktuSelesaiCooldown = 0; 
+            this.timerSelesaiBilasTanda = null;
+
+            // --- TAMBAHKAN LINE INI: Mencatat milestone waktu berakhirnya darah biru ---
+            this.waktuSelesaiDarahBiru = 0;
+
             // 1. Mengatur batas luas dunia game agar karakter tidak bisa jalan menembus batas map
             this.physics.world.setBounds(0, 0, MAP_WIDTH, MAP_HEIGHT);
 
@@ -97,13 +136,13 @@
             batuGroup = this.physics.add.staticGroup();
 
             // ATUR JUMLAH BATU DI SINI (Ubah angka ini sesuai selera Anda)
-            const JUMLAH_BATU = 400; 
+            const JUMLAH_BATU = 440; 
 
             for (let i = 0; i < JUMLAH_BATU; i++) {
                 // Mengacak posisi X dan Y di sepanjang ukuran MAP_WIDTH dan MAP_HEIGHT
                 // Ditambahkan margin sedikit (misal 100px) agar tidak terlalu mepet di ujung paling luar map
-                let randomX = Phaser.Math.Between(100, MAP_WIDTH - 100);
-                let randomY = Phaser.Math.Between(100, MAP_HEIGHT - 100);
+                let randomX = Phaser.Math.Between(80, MAP_WIDTH - 80);
+                let randomY = Phaser.Math.Between(80, MAP_HEIGHT - 80);
 
                 // Membuat objek batu di koordinat acak tersebut
                 let batu = batuGroup.create(randomX, randomY, 'batu');
@@ -195,35 +234,32 @@
             background.setTileScale(0.2, 0.2);
 
             // =================================================================
-            // --- PERBAIKAN TOTAL: UI LAYER MENGGUNAKAN CONTAINER KEBAL ZOOM ---
+            // --- PERBAIKAN LAYER UI: TAMBAHKAN TEKS COOLDOWN SKILL ---
             // =================================================================
-            
-            // 1. Buat objek teks langsung di koordinat lokal (Pojok Kiri Atas = 20, 20)
-            // Warna fill diganti ke putih (#ffffff) agar kontras dengan background gelap
             hpText = this.add.text(20, 20, 'HP: ' + hp, {
-                fontSize: '48px',
-                fill: '#ffffff', 
-                fontStyle: 'bold',
-                fontFamily: 'Arial'
+                fontSize: '48px', fill: '#ffffff', fontStyle: 'bold', fontFamily: 'Arial'
             });
 
             skorText = this.add.text(20, 80, 'SKOR: ' + skor, {
-                fontSize: '48px',
-                fill: '#ffffff', 
-                fontStyle: 'bold',
-                fontFamily: 'Arial'
+                fontSize: '48px', fill: '#ffffff', fontStyle: 'bold', fontFamily: 'Arial'
             });
 
-            // 2. Wadahi kedua teks tersebut ke dalam sebuah Container
-            let uiContainer = this.add.container(0, 0, [hpText, skorText]);
-            
-            // Kunci posisi container agar mengambang statis di layar monitor
+            // Teks indikator kesiapan skill dash baru
+            this.cdText = this.add.text(20, 140, 'DASH: INACTIVE', {
+                fontSize: '32px', fill: '#888888', fontStyle: 'bold', fontFamily: 'Arial'
+            });
+
+            // Masukkan cdText ke dalam urutan susunan container
+            let uiContainer = this.add.container(0, 0, [hpText, skorText, this.cdText]);
             uiContainer.setScrollFactor(0);
             uiContainer.setDepth(999);
 
-            // 3. KUNCI UTAMA: Kalikan skala container secara terbalik dengan nilai zoom kamera
-            // Jika kamera diperbesar 2.5x, container kita perkecil (1 / 2.5) agar ukurannya tetap 1x di layar
             let faktorZoom = 2.5;
+            uiContainer.setScale(1 / faktorZoom);
+            uiContainer.setPosition(
+                (this.scale.width / 2) * (1 - 1 / faktorZoom),
+                (this.scale.height / 2) * (1 - 1 / faktorZoom)
+            );
             uiContainer.setScale(1 / faktorZoom);
 
             // Sesuaikan posisi container ke pojok kiri atas area pandang kamera yang menciut
@@ -295,7 +331,7 @@
             });
         }
 
-        update() {
+        update(time) {
             // --- LOGIKA CEK TOMBOL PAUSE (Paling Atas) ---
             if (Phaser.Input.Keyboard.JustDown(this.tombolEsc) && hp > 0) {
                 this.pemicuPause();
@@ -305,21 +341,36 @@
             // 1. DAFTARKAN PAD PERTAMA JIKA TERHUBUNG
             let pad = this.input.gamepad.total ? this.input.gamepad.getPad(0) : null;
 
-            // 2. LOGIKA ARAH HADAP (MOUSE ATAU ANALOG KANAN)
+            // =================================================================
+            // --- PERBAIKAN LOGIKA: LOCK ORIENTATION (MURNI MEMORI ANALOG KANAN) ---
+            // =================================================================
             let pointer = this.input.activePointer;
-            let menggunakanStikUntukMelihat = pad && (Math.abs(pad.axes[2].value) > 0.1 || Math.abs(pad.axes[3].value) > 0.1);
+            const DEADZONE_ANALOG = 0.25; // Naikkan sedikit deadzone agar lebih stabil
+            
+            let analogKananX = pad ? pad.axes[2].value : 0;
+            let analogKananY = pad ? pad.axes[3].value : 0;
+            
+            // Cek apakah ada input aktif pada analog kanan
+            let analogKananAktif = pad && (Math.abs(analogKananX) > DEADZONE_ANALOG || Math.abs(analogKananY) > DEADZONE_ANALOG);
 
-            if (menggunakanStikUntukMelihat) {
-                // Jika analog kanan stik digerakkan, hadap ditentukan dari nilai sumbu X analog kanan (axes[2])
-                if (pad.axes[2].value < 0) {
+            if (analogKananAktif) {
+                // 1. Simpan sudut radian aktual saat analog didorong
+                this.sudutBidikanTerakhir = Math.atan2(analogKananY, analogKananX);
+                
+                // 2. Tentukan visual flip karakter dari stik kanan saja
+                if (analogKananX < -DEADZONE_ANALOG) {
                     player.setFlipX(true);
                     arahTerakhir = 'kiri';
-                } else if (pad.axes[2].value > 0) {
+                } else if (analogKananX > DEADZONE_ANALOG) {
                     player.setFlipX(false);
                     arahTerakhir = 'kanan';
                 }
+            } else if (pad) {
+                // JIKA MENGGUNAKAN GAMEPAD & ANALOG KANAN DILEPAS: 
+                // Kunci total arah visual! Abaikan arah jalan analog kiri (axes[0] dan axes[1]).
+                // Karakter akan tetap menghadap ke posisi flipX terakhirnya secara permanen.
             } else {
-                // Jika tidak ada input stik, gunakan posisi kursor mouse seperti biasa
+                // JIKA MURNI MOUSE & KEYBOARD (Gamepad tidak aktif)
                 if (pointer.worldX < player.x) {
                     player.setFlipX(true);
                     arahTerakhir = 'kiri';
@@ -358,7 +409,7 @@
 
             // 4. DETEKSI TOMBOL RT (RIGHT TRIGGER / R2) UNTUK SERANGAN
             // Di Phaser, RT biasanya dikenali sebagai tombol indeks ke-7 (buttons[7]) atau axes[5]
-            if (pad && pad.buttons[7] && pad.buttons[7].pressed) {
+            if (pad && pad.buttons[1] && pad.buttons[1].pressed) {
                 this.eksekusiSerangan();
             }
 
@@ -395,6 +446,81 @@
                     tks.setPosition(enemy.x, enemy.y - 40);
                 }
             });
+
+            // =================================================================
+            // --- LOGIKA PEMICU SKILL DASH (HOLD & RELEASE / TAP) ---
+            // =================================================================
+            if (!this.isDashing && hp > 0 && this.skillBisaDigunakan) {
+                let rtDitekan = pad && pad.buttons[7] && pad.buttons[7].pressed;
+                let eDitekan = this.tombolSkill.isDown;
+
+                // Tentukan sudut bidikan berdasarkan perangkat yang aktif
+                let sudutDash = this.sudutBidikanTerakhir; // Default mengikuti memori stik kanan
+                if (!pad) {
+                    sudutDash = Phaser.Math.Angle.Between(player.x, player.y, pointer.worldX, pointer.worldY);
+                }
+
+                if (eDitekan || rtDitekan) {
+                    // Jika baru pertama kali ditekan, tandai sedang membidik (Aiming)
+                    if (!this.isAimingSkill) {
+                        this.isAimingSkill = true;
+                        this.waktuMulaiTekanSkill = time; // Catat waktu untuk membedakan TAP dan HOLD
+                    }
+
+                    // Hapus gambar frame sebelumnya sebelum menggambar indikator baru
+                    this.indikatorSkill.clear();
+
+                    // EFEK HOLD: Jika ditekan lebih dari 150 milidetik, munculkan indikator panah bidikan
+                    if (time - this.waktuMulaiTekanSkill > 150) {
+                        const JARAK_DASH = 150; // Jarak jangkauan dash
+                        let targetX = player.x + Math.cos(sudutDash) * JARAK_DASH;
+                        let targetY = player.y + Math.sin(sudutDash) * JARAK_DASH;
+
+                        // Menggambar garis indikator (Warna Putih Transparan)
+                        this.indikatorSkill.lineStyle(4, 0xffffff, 0.5);
+                        this.indikatorSkill.beginPath();
+                        this.indikatorSkill.moveTo(player.x, player.y);
+                        this.indikatorSkill.lineTo(targetX, targetY);
+                        this.indikatorSkill.strokePath();
+
+                        // Menggambar lingkaran kecil di ujung tujuan dash
+                        this.indikatorSkill.fillStyle(0xffffff, 0.8);
+                        this.indikatorSkill.fillCircle(targetX, targetY, 6);
+                    }
+                } else {
+                    // KETIKA TOMBOL DILEPAS (RELEASE)
+                    if (this.isAimingSkill) {
+                        this.indikatorSkill.clear(); // Hapus indikator dari layar
+                        this.isAimingSkill = false;
+
+                        // Eksekusi skill dash menggunakan sudut yang telah ditentukan saat tombol dilepas
+                        this.eksekusiSkillDash(sudutDash);
+                    }
+                }
+            }
+
+            // =================================================================
+            // --- LOGIKA RENDER UI TEKS STATUS DEFAULT ABU-ABU ---
+            // =================================================================
+            if (this.cdText) {
+                let adaDarahBiruAktif = enemyGroup.getChildren().some(enemy => enemy.getData('statusTandaBiru') === true);
+
+                if (adaDarahBiruAktif) {
+                    let sisaWaktuBiru = (this.waktuSelesaiDarahBiru - time) / 1000;
+                    
+                    if (sisaWaktuBiru > 0) {
+                        this.cdText.setText('DASH: ' + sisaWaktuBiru.toFixed(1) + 's');
+                        this.cdText.setStyle({ fill: '#ff3333' }); // Tetap merah menyala saat countdown berjalan
+                    } else {
+                        this.cdText.setText('DASH: GA AKTIF');
+                        this.cdText.setStyle({ fill: '#888888' });
+                    }
+                } else {
+                    // Jika tidak ada darah biru yang menyala, UI otomatis terkunci ke GA AKTIF warna abu-abu
+                    this.cdText.setText('DASH: GA AKTIF');
+                    this.cdText.setStyle({ fill: '#888888' });
+                }
+            }
         }
 
         // --- TARUH METHOD PAUSE MANDIRI ANDA DI SINI (DI LUAR UPDATE) ---
@@ -469,13 +595,23 @@
             let pad = this.input.gamepad.total ? this.input.gamepad.getPad(0) : null;
             
             let sudutRadian;
+            const DEADZONE_ANALOG = 0.25;
 
-            // Cek apakah analog kanan stik sedang diarahkan
-            let menggunakanStikUntukMelihat = pad && (Math.abs(pad.axes[2].value) > 0.1 || Math.abs(pad.axes[3].value) > 0.1);
+            if (pad) {
+                let analogKananX = pad.axes[2].value;
+                let analogKananY = pad.axes[3].value;
+                let analogKananAktif = (Math.abs(analogKananX) > DEADZONE_ANALOG || Math.abs(analogKananY) > DEADZONE_ANALOG);
 
-            if (menggunakanStikUntukMelihat) {
-                sudutRadian = Math.atan2(pad.axes[3].value, pad.axes[2].value);
+                if (analogKananAktif) {
+                    // Jika stik kanan sedang didorong, tebas ke arah dorongan aktif
+                    sudutRadian = Math.atan2(analogKananY, analogKananX);
+                    this.sudutBidikanTerakhir = sudutRadian; // Perbarui memori
+                } else {
+                    // --- KODE KUNCI: Jika stik kanan dilepas, gunakan sudut memori terakhir ---
+                    sudutRadian = this.sudutBidikanTerakhir;
+                }
             } else {
+                // Jika menggunakan mouse & keyboard
                 sudutRadian = Phaser.Math.Angle.Between(player.x, player.y, pointer.worldX, pointer.worldY);
             }
 
@@ -591,8 +727,24 @@
             enemy.setData('baruKenaTebas', true);
             enemy.scene.time.delayedCall(150, () => { if(enemy.active) enemy.setData('baruKenaTebas', false); });
 
-            let darahMusuh = enemy.getData('enemyHp') - 10;
+            // =================================================================
+            // --- PERBAIKAN 4: BONUS DAMAGE SEPEREMPAT PERSEN (25%) SAAT COOLDOWN DARAH BIRU AKTIF ---
+            // =================================================================
+            let baseDamage = 8; // Damage pedang standar asli Anda
+            
+            // Cek apakah ada efek darah biru yang masih berjalan aktif di map saat ini
+            let adaDarahBiruAktif = enemyGroup.getChildren().some(e => e.getData('statusTandaBiru') === true);
+            
+            // Jika aktif, damage naik 25% (seperempat persen dari base damage: 8 + 2 = 10 damage)
+            let damageAkhir = adaDarahBiruAktif ? (baseDamage * 1.25) : baseDamage;
+
+            let darahMusuh = enemy.getData('enemyHp') - 8;
             enemy.setData('enemyHp', darahMusuh);
+
+            // =================================================================
+            // --- TAMBAHKAN LINE INI DI DALAM FUNGSI TEBASMUSUH ---
+            // =================================================================
+            this.munculkanTeksDamage(enemy.x, enemy.y, damageAkhir);
 
             let tks = enemy.getData('hpTextObject');
             if (tks) tks.setText(darahMusuh);
@@ -676,6 +828,284 @@
                 // Hapus musuh yang lama dari permainan
                 enemyGroup.remove(enemy, true, true);
             }
+        }
+    
+        eksekusiSkillDash(sudutRadian) {
+            if (this.isDashing || !this.skillBisaDigunakan) return;
+
+            this.isDashing = true;
+            this.skillBisaDigunakan = false; 
+            isKnockback = true; 
+
+            const KECEPATAN_DASH = 2000; 
+            const DURASI_DASH = 100;    
+            const DAMAGE_DASH = 16;     
+            const COOLDOWN_CEPAT = 120;   
+            const COOLDOWN_ASLI = 2000;   
+            const DURASI_DARAH_BIRU = 2000; 
+
+            // =================================================================
+            // --- FIX MECHANIC: LAYANGAN STRETCH DINAMIS (EKOR DIKUNCI DI START) ---
+            // =================================================================
+            const titikAwalX = player.x;
+            const titikAwalY = player.y;
+
+            let efekPoligonDash = this.add.graphics();
+            efekPoligonDash.setDepth(995); 
+
+            let dataEfekPoligon = { alpha: 0.4 }; 
+
+            let penggambarPoligonRealtime = this.time.addEvent({
+                delay: 16, 
+                loop: true,
+                callback: () => {
+                    if (efekPoligonDash) {
+                        efekPoligonDash.clear();
+                        efekPoligonDash.fillStyle(0xffffff, dataEfekPoligon.alpha);
+
+                        let sudutTegakLurus = sudutRadian + Math.PI / 2;
+                        
+                        // --- KONFIGURASI UKURAN LAYANGAN STRETCH ---
+                        const LEBAR_SAYAP = 20;         // Lebar bentangan sayap kiri-kanan
+                        const JARAK_LANCIP_DEPAN = 15;   // Kepala lancip PENDEK BANGET menempel di posisi player (bisa diatur)
+                        const JARAK_SAYAP_DARI_DEPAN = 25; // Jarak sayap dihitung mundur dari posisi player saat ini
+
+                        // Titik 1: Ekor Paling Belakang (DIKUNCI MATI di titik awal game saat start dash)
+                        let ekorX = titikAwalX;
+                        let ekorY = titikAwalY;
+
+                        // Titik 4: Kepala Lancip Pendek (Mengikuti persis di titik depan player)
+                        let kepalaX = player.x + Math.cos(sudutRadian) * JARAK_LANCIP_DEPAN;
+                        let kepalaY = player.y + Math.sin(sudutRadian) * JARAK_LANCIP_DEPAN;
+
+                        // Titik 2 & 3: Sayap Kiri & Kanan (Posisinya dinamis, ikut maju mengikuti player)
+                        let titikPusatSayapX = player.x - Math.cos(sudutRadian) * JARAK_SAYAP_DARI_DEPAN;
+                        let titikPusatSayapY = player.y - Math.sin(sudutRadian) * JARAK_SAYAP_DARI_DEPAN;
+                        
+                        let sayapKiriX = titikPusatSayapX + Math.cos(sudutTegakLurus) * LEBAR_SAYAP;
+                        let sayapKiriY = titikPusatSayapY + Math.sin(sudutTegakLurus) * LEBAR_SAYAP;
+                        let sayapKananX = titikPusatSayapX - Math.cos(sudutTegakLurus) * LEBAR_SAYAP;
+                        let sayapKananY = titikPusatSayapY - Math.sin(sudutTegakLurus) * LEBAR_SAYAP;
+
+                        // Susun formasi layangan melar
+                        let kumpulanTitikLayangan = [
+                            new Phaser.Geom.Point(ekorX, ekorY),
+                            new Phaser.Geom.Point(sayapKiriX, sayapKiriY),
+                            new Phaser.Geom.Point(kepalaX, kepalaY), 
+                            new Phaser.Geom.Point(sayapKananX, sayapKananY)
+                        ];
+
+                        efekPoligonDash.fillPoints(kumpulanTitikLayangan, true);
+                    }
+                }
+            });
+
+            let mumpuniMemicuCooldownLama = false;
+            let jumlahMusuhTertabrak = 0; 
+            
+            // --- VARIABEL KUNCI BARU: Melacak apakah ada musuh merah (baru) yang kena ---
+            let kenaMusuhBaru = false; 
+
+            player.body.checkCollision.none = true;
+            let hpSaatMulaiDash = hp;
+
+            player.setVelocityX(Math.cos(sudutRadian) * KECEPATAN_DASH);
+            player.setVelocityY(Math.sin(sudutRadian) * KECEPATAN_DASH);
+            player.setTint(0xffffff); 
+
+            let dashHitbox = this.physics.add.image(player.x, player.y, null);
+            dashHitbox.setDisplaySize(player.displayWidth * 1.5, player.displayHeight * 1.5);
+            dashHitbox.body.setAllowGravity(false);
+            dashHitbox.setVisible(false);
+
+            let overlapDash = this.physics.add.overlap(dashHitbox, enemyGroup, (hitbox, enemy) => {
+                if (enemy.getData('terkenaDamageDash')) return;
+                enemy.setData('terkenaDamageDash', true);
+
+                jumlahMusuhTertabrak++; 
+
+                let darahMusuh = enemy.getData('enemyHp') - DAMAGE_DASH;
+                enemy.setData('enemyHp', darahMusuh);
+
+                // =============================================================
+                // --- TAMBAHKAN LINE INI DI DALAM CALLBACK OVERLAP DASH ---
+                // =============================================================
+                this.munculkanTeksDamage(enemy.x, enemy.y, DAMAGE_DASH);
+
+                let tks = enemy.getData('hpTextObject');
+                if (tks) tks.setText(darahMusuh);
+
+                let sudahAdaTandaBiru = enemy.getData('statusTandaBiru');
+
+                if (sudahAdaTandaBiru) {
+                    mumpuniMemicuCooldownLama = true;
+                } else {
+                    // --- RE-START UTAMA JIKA MENGENAI MUSUH DARAH MERAH BIASA ---
+                    kenaMusuhBaru = true; // Tandai ada target baru yang sukses terkena dash
+                    
+                    enemy.setData('statusTandaBiru', true);
+                    if (tks) tks.setStyle({ fill: '#0000ff' });
+
+                    this.waktuSelesaiDarahBiru = this.time.now + DURASI_DARAH_BIRU;
+
+                    this.time.delayedCall(DURASI_DARAH_BIRU, () => {
+                        if (enemy && enemy.active) {
+                            enemy.setData('statusTandaBiru', false);
+                            let currentTks = enemy.getData('hpTextObject');
+                            if (currentTks) currentTks.setStyle({ fill: '#ff0000' }); 
+                        }
+                    }, [], this);
+                }
+
+                enemy.setData('sedangKnockback', true);
+                enemy.setVelocityX(Math.cos(sudutRadian) * 200);
+                enemy.setVelocityY(Math.sin(sudutRadian) * 200);
+                enemy.setTint(sudahAdaTandaBiru ? 0x00ffff : 0xff0000);
+
+                this.time.delayedCall(150, () => {
+                    if (enemy && enemy.active) {
+                        enemy.clearTint();
+                        enemy.setData('sedangKnockback', false);
+                        enemy.setData('terkenaDamageDash', false);
+                    }
+                });
+
+                if (darahMusuh <= 0) {
+                    this.tebasMusuh({body: {embedded: false}}, enemy);
+                }
+            }, null, this);
+
+            let pengikutPosisi = this.time.addEvent({
+                delay: 16, loop: true,
+                callback: () => {
+                    if (dashHitbox && dashHitbox.body) dashHitbox.setPosition(player.x, player.y);
+                    if (this.isDashing) {
+                        hp = hpSaatMulaiDash;
+                        hpText.setText('HP: ' + hp);
+                    }
+                }
+            });
+
+            this.time.delayedCall(DURASI_DASH, () => {
+                player.clearTint();
+                player.setVelocity(0);
+                isKnockback = false;   
+                this.isDashing = false;
+                player.body.checkCollision.none = false; 
+
+                pengikutPosisi.destroy();
+                overlapDash.destroy();
+                dashHitbox.destroy();
+
+                // =============================================================
+                // --- PROSES MEMUDARKAN (FADE OUT) GEOMETRI LAYANGAN STRETCH ---
+                // =============================================================
+                penggambarPoligonRealtime.destroy(); 
+
+                this.tweens.add({
+                    targets: dataEfekPoligon,
+                    alpha: 0, 
+                    duration: 200,
+                    ease: 'Cubic.easeOut',
+                    onUpdate: () => {
+                        if (efekPoligonDash) {
+                            efekPoligonDash.clear();
+                            efekPoligonDash.fillStyle(0xffffff, dataEfekPoligon.alpha);
+
+                            let sudutTegakLurus = sudutRadian + Math.PI / 2;
+                            const LEBAR_SAYAP = 20;       
+                            const JARAK_LANCIP_DEPAN = 15; 
+                            const JARAK_SAYAP_DARI_DEPAN = 25;
+
+                            let ekorX = titikAwalX;
+                            let ekorY = titikAwalY;
+                            
+                            let kepalaX = player.x + Math.cos(sudutRadian) * JARAK_LANCIP_DEPAN;
+                            let kepalaY = player.y + Math.sin(sudutRadian) * JARAK_LANCIP_DEPAN;
+
+                            let titikPusatSayapX = player.x - Math.cos(sudutRadian) * JARAK_SAYAP_DARI_DEPAN;
+                            let titikPusatSayapY = player.y - Math.sin(sudutRadian) * JARAK_SAYAP_DARI_DEPAN;
+                            let sayapKiriX = titikPusatSayapX + Math.cos(sudutTegakLurus) * LEBAR_SAYAP;
+                            let sayapKiriY = titikPusatSayapY + Math.sin(sudutTegakLurus) * LEBAR_SAYAP;
+                            let sayapKananX = titikPusatSayapX - Math.cos(sudutTegakLurus) * LEBAR_SAYAP;
+                            let sayapKananY = titikPusatSayapY - Math.sin(sudutTegakLurus) * LEBAR_SAYAP;
+
+                            let kumpulanTitikFinal = [
+                                new Phaser.Geom.Point(ekorX, ekorY),
+                                new Phaser.Geom.Point(sayapKiriX, sayapKiriY),
+                                new Phaser.Geom.Point(kepalaX, kepalaY),
+                                new Phaser.Geom.Point(sayapKananX, sayapKananY)
+                            ];
+                            efekPoligonDash.fillPoints(kumpulanTitikFinal, true);
+                        }
+                    },
+                    onComplete: () => {
+                        if (efekPoligonDash) efekPoligonDash.destroy(); 
+                    }
+                });
+
+                // =============================================================
+                // --- PERBAIKAN LOGIKA PENENTUAN DURASI COOLDOWN ---
+                // =============================================================
+                let durasiPilihanCD;
+                
+                if (jumlahMusuhTertabrak === 0) {
+                    // 1. Jika meleset total (tidak kena siapa-siapa), memicu cooldown lama
+                    durasiPilihanCD = COOLDOWN_ASLI;
+                } else if (kenaMusuhBaru) {
+                    // 2. Jika mengenai musuh baru (walaupun ada musuh biru di dekatnya), tetap dapat cooldown cepat
+                    durasiPilihanCD = COOLDOWN_CEPAT;
+                } else if (mumpuniMemicuCooldownLama) {
+                    // 3. Jika hanya mengenai musuh yang sudah bertanda biru saja, memicu cooldown lama
+                    durasiPilihanCD = COOLDOWN_ASLI;
+                } else {
+                    durasiPilihanCD = COOLDOWN_CEPAT;
+                }
+
+                this.waktuSelesaiCooldown = this.time.now + durasiPilihanCD;
+
+                this.time.delayedCall(durasiPilihanCD, () => {
+                    if (hp > 0) {
+                        this.skillBisaDigunakan = true;
+                        
+                        let adaDarahBiruAktif = enemyGroup.getChildren().some(enemy => enemy.getData('statusTandaBiru') === true);
+                        if (!adaDarahBiruAktif && this.cdText) {
+                            this.cdText.setText('DASH: GA AKTIF');
+                            this.cdText.setStyle({ fill: '#888888' }); 
+                        }
+
+                        player.setTint(0x00ff00);
+                        this.time.delayedCall(100, () => player.clearTint());
+                    }
+                }, [], this);
+
+            }, [], this);
+        }
+
+        munculkanTeksDamage(x, y, jumlahDamage) {
+            // Buat objek teks tepat di koordinat musuh saat terkena serangan
+            let teksDamage = this.add.text(x + Phaser.Math.Between(-10, 10), y - 20, jumlahDamage, {
+                fontSize: '12px',
+                fill: '#ffffff', // Warna kuning jingga agar kontras dan tajam
+                fontStyle: 'bold',
+                fontFamily: 'Arial',
+                stroke: '#000000', // Outlined hitam agar scannable di lantai gelap
+                strokeThickness: 3
+            });
+            teksDamage.setOrigin(0.5);
+            teksDamage.setDepth(996); // Di atas karakter, di bawah UI Layer
+
+            // Jalankan animasi Tween selama 0.5 detik (500ms)
+            this.tweens.add({
+                targets: teksDamage,
+                y: teksDamage.y - 30, // Bergerak naik ke atas secara elegan
+                alpha: 0,             // Efek memudar (Fade Out) menjadi transparan
+                duration: 500,        // Tepat 0.5 detik sesuai permintaan
+                ease: 'Linear',
+                onComplete: () => {
+                    teksDamage.destroy(); // Hancurkan objek dari memori setelah selesai
+                }
+            });
         }
     }
 
@@ -961,6 +1391,8 @@
     let enemyGroup;
     let wasd; // Variabel baru untuk menampung tombol WASD
 
+    this.sudutBidikanTerakhir = 0;
+
     let skor = 0;       // Nilai skor awal game
     let skorText;       // Tempat menyimpan objek teks UI skor
 
@@ -985,6 +1417,19 @@
 
     // --- CONFIG JANGKAUAN SERANGAN PLAYER ---
     const JANGKAUAN_SERANGAN = 50; // Ubah angka piksel ini untuk mengatur seberapa jauh tebasannya
+
+    // =================================================================
+    // --- DEKLARASI STATE SKILL DASH & INDIKATOR ---
+    // =================================================================
+    this.isDashing = false;
+    this.isAimingSkill = false;
+    
+    // Registrasi tombol E untuk Keyboard
+    this.tombolSkill = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+
+    // Objek grafis khusus untuk menggambar garis/panah indikator bidikan dash
+    this.indikatorSkill = this.add.graphics();
+    this.indikatorSkill.setDepth(997); // Di bawah efek tebasan pedang
 
     // --- FUNGSI ASISTEN UNTUK MENGHITUNG ARAH DORONGAN ---
     function bikinKnockback(player, enemy, kekuatan) {
