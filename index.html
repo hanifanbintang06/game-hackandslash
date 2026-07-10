@@ -202,7 +202,9 @@
             // Iseng ubah angkanya sesuai selera Anda:
             this.cameras.main.setZoom(2.5);
 
-            player.setDisplaySize(44, 64)
+            if (player) {
+                player.setDisplaySize(44, 64);
+            }
 
             background.setTileScale(0.2, 0.2);
 
@@ -386,30 +388,42 @@
                 this.eksekusiSerangan();
             }
 
-            // --- LOGIKA AI MUSUH TERPUSAT & DINAMIS ---
             enemyGroup.getChildren().forEach((enemy) => {
+                // Jika knockback, skip AI
                 if (enemy.getData('sedangKnockback')) {
                     enemy.setVelocityX(enemy.body.velocity.x * 0.9);
                     enemy.setVelocityY(enemy.body.velocity.y * 0.9);
-                    
-                    let tks = enemy.getData('hpTextObject');
-                    if (tks) tks.setPosition(enemy.x, enemy.y - 40);
                     return; 
                 }
 
-                let jarak = Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y);
-                
-                // Membaca jarak deteksi dan kecepatan unik milik masing-masing musuh dari memori data
-                let batasDeteksi = enemy.getData('radiusDeteksi');
-                let speedMusuh = enemy.getData('kecepatanKustom');
+                // Jika musuh sedang dalam animasi serangan/jeda, biarkan dia tetap diam
+                if (enemy.getData('sedangEksekusiSerangan')) {
+                    enemy.setVelocity(0);
+                    return;
+                }
 
-                if (jarak < batasDeteksi) {
+                let jarak = Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y);  
+
+                // Ambil statistik musuh spesifik dari datanya sendiri
+                let batasDeteksi = enemy.getData('radiusDeteksi');
+                let batasSerang = enemy.getData('radiusSerang');
+                let speedMusuh = enemy.getData('kecepatanKustom'); // Sekarang dinamis!
+
+                // LOGIKA PERILAKU:
+                if (jarak <= batasSerang) {
+                    // 1. Jika di dalam radius serang: Berhenti, lalu panggil fungsi serangan
+                    enemy.setVelocity(0);
+                    this.prosesSeranganKroco(player, enemy);
+                } else if (jarak < batasDeteksi) {
+                    // 2. Jika di dalam radius deteksi tapi luar radius serang: KEJAR
                     this.physics.moveToObject(enemy, player, speedMusuh);
                     enemy.setFlipX(player.x < enemy.x);
                 } else {
+                    // 3. Jika terlalu jauh: Diam
                     enemy.setVelocity(0);
                 }
                 
+                // Update teks HP
                 let tks = enemy.getData('hpTextObject');
                 if (tks) tks.setPosition(enemy.x, enemy.y - 40);
             });
@@ -501,56 +515,18 @@
         }
 
         hantamPlayer(player, enemy) {
-            // 1. CEK COOLDOWN SPESIFIK MILIK MUSUH YANG MENABRAK
-            if (enemy.getData('sedangCooldown')) {
-                // Jika musuh ini baru saja memukul, dia cuma bisa dorong dikit (knockback ringan)
-                bikinKnockback(player, enemy, 150); 
-                return;
+            if (hp <= 0) return;
+
+            let tipeMusuh = enemy.getData('tipe');
+
+            if (tipeMusuh === 'kroco' || tipeMusuh === 'elite') {
+                this.prosesSeranganKroco(player, enemy);
             }
-
-            // Ambil damage unik dari musuh yang menabrak!
-            let besarDamage = enemy.getData('damageSerangan');
-            hp -= besarDamage;
-            hpText.setText('HP: ' + hp);
-            
-            enemy.setData('sedangCooldown', true);
-            isKnockback = true; 
-            bikinKnockback(player, enemy, 400); 
-
-            this.time.delayedCall(200, () => { isKnockback = false; }, [], this);
-
-            // 3. --- EFEK KEDIP MERAH INSTAN SAAT KENA HIT ---
-            player.setTint(0xff0000); 
-            this.time.delayedCall(150, () => {
-                if (hp > 0) player.clearTint();
-            }, [], this);
-
-            // 4. --- TIMER COOLDOWN 2 DETIK KHUSUS UNTUK MUSUH INI ---
-            this.time.delayedCall(2000, () => {
-                // Setelah 2 detik, hanya musuh ini yang diizinkan untuk menyerang kembali
-                if (enemy && enemy.active) {
-                    enemy.setData('sedangCooldown', false);
-                }
-            }, [], this);
-
-            // 5. --- LOGIKA GAME OVER ---
-            if (hp <= 0) {
-                hp = 0;
-                hpText.setText('HP: GAME OVER');
-                player.setVelocity(0);      
-                player.setTint(0xff0000);    
-                this.physics.pause();     
-                
-                // AMBIL REFERENSI SCENE DENGAN BENAR AGAR BISA PINDAH LAYAR
-                let targetScene = player.scene;
-                targetScene.time.delayedCall(500, () => {
-                    targetScene.scene.start('SceneGameOver');
-                });
-            }
+            // Blok Game Over lama di bawah sini sudah dihapus total karena sudah dipindah ke atas
         }
 
         eksekusiSerangan() {
-            if (isAttacking || hp <= 0) return;
+            if (isAttacking || hp <= 0 || !attackVisual) return;
 
             const JANGKAUAN = JANGKAUAN_SERANGAN;
             let pointer = this.input.activePointer;
@@ -775,7 +751,7 @@
             const DAMAGE_DASH = 16;     
             const COOLDOWN_CEPAT = 120;   
             const COOLDOWN_ASLI = 2000;   
-            const DURASI_DARAH_BIRU = 2000; 
+            const DURASI_DARAH_BIRU = 3000; 
 
             // =================================================================
             // --- FIX MECHANIC: LAYANGAN STRETCH DINAMIS (EKOR DIKUNCI DI START) ---
@@ -977,21 +953,28 @@
                     }
                 });
 
-                // =============================================================
-                // --- PERBAIKAN LOGIKA PENENTUAN DURASI COOLDOWN ---
-                // =============================================================
+                // Ganti bagian penentuan durasiPilihanCD dengan ini:
                 let durasiPilihanCD;
+                let sisaWaktuBiru = this.waktuSelesaiDarahBiru - this.time.now;
                 
-                if (jumlahMusuhTertabrak === 0) {
-                    // 1. Jika meleset total (tidak kena siapa-siapa), memicu cooldown lama
-                    durasiPilihanCD = COOLDOWN_ASLI;
-                } else if (kenaMusuhBaru) {
-                    // 2. Jika mengenai musuh baru (walaupun ada musuh biru di dekatnya), tetap dapat cooldown cepat
+                // PRIORITAS 1: Jika kena musuh baru (merah), selalu cooldown cepat
+                if (kenaMusuhBaru) {
                     durasiPilihanCD = COOLDOWN_CEPAT;
-                } else if (mumpuniMemicuCooldownLama) {
-                    // 3. Jika hanya mengenai musuh yang sudah bertanda biru saja, memicu cooldown lama
+                } 
+                // PRIORITAS 2: Jika meleset total (tidak kena musuh sama sekali)
+                else if (jumlahMusuhTertabrak === 0) {
                     durasiPilihanCD = COOLDOWN_ASLI;
-                } else {
+                } 
+                // PRIORITAS 3: Jika hanya kena musuh bertanda biru
+                else if (mumpuniMemicuCooldownLama) {
+                    // Hanya cooldown lama jika durasi tanda biru masih di atas 1 detik
+                    if (sisaWaktuBiru > 1000) {
+                        durasiPilihanCD = COOLDOWN_ASLI;
+                    } else {
+                        durasiPilihanCD = COOLDOWN_CEPAT;
+                    }
+                } 
+                else {
                     durasiPilihanCD = COOLDOWN_CEPAT;
                 }
 
@@ -1042,28 +1025,32 @@
         }
     
         bikinMusuh(x, y, tipe) {
-            // Ambil data spesifikasi dari kamus profil, jika tidak ada gunakan default kroco
             const spek = PROFIL_MUSUH[tipe] || PROFIL_MUSUH['kroco'];
 
+            // Gunakan enemyGroup global yang sudah dibuat di create()
             let enemy = enemyGroup.create(x, y, spek.texture);
+            
+            // Berikan setting fisik
             enemy.setCollideWorldBounds(true);
             enemy.setDisplaySize(48, 64);
             enemy.body.setSize(24, 24);
             enemy.setBounce(0.2);
 
-            // --- SUNTIKKAN STATS SECARA TERPISAH KE MEMORI INTERNAL ---
             enemy.setData({
                 'tipe': tipe,
                 'enemyHp': spek.hpMax,
                 'kecepatanKustom': spek.kecepatan,
                 'radiusDeteksi': spek.radiusDeteksi,
+                'radiusSerang': spek.radiusSerang,
                 'damageSerangan': spek.damage,
+                'kekuatanDorong': spek.kekuatanDorong,
                 'poinSkor': spek.skorPoin,
                 'sedangCooldown': false,
-                'sedangKnockback': false
+                'sedangKnockback': false,
+                'sedangEksekusiSerangan': false
             });
 
-            // Pembuatan Teks HP dinamis mengikuti kustomisasi warna profil
+            // Teks HP
             let enemyHpText = this.add.text(enemy.x, enemy.y - 40, spek.hpMax.toString(), {
                 fontSize: '12px',
                 fill: spek.warnaTeks,
@@ -1073,6 +1060,106 @@
             enemy.setData('hpTextObject', enemyHpText);
 
             return enemy;
+        }
+    
+        seranganTipeKroco(player, enemy) {
+            // 1. Ambil spesifikasi variabel unik milik musuh ini dari memorinya
+            let besarDamage = enemy.getData('damageSerangan');
+            let dayaDorong = enemy.getData('kekuatanDorong');
+
+            // 2. Kurangi HP Player
+            hp -= besarDamage;
+            hpText.setText('HP: ' + hp);
+            
+            // 3. Kunci pergerakan keyboard player seketika
+            isKnockback = true; 
+            
+            // 4. Lemparkan player menggunakan variabel dayaDorong dinamis
+            bikinKnockback(player, enemy, dayaDorong); 
+
+            // Timer melepas kontrol keyboard player setelah 0.2 detik
+            this.time.delayedCall(200, () => { 
+                isKnockback = false; 
+            }, [], this);
+
+            // Efek kedip merah pada player saat menerima damage
+            player.setTint(0xff0000); 
+            this.time.delayedCall(150, () => {
+                if (hp > 0) player.clearTint();
+            }, [], this);
+        }
+    
+        prosesSeranganKroco(player, enemy) {
+            if (enemy.getData('sedangEksekusiSerangan')) return;
+            enemy.setData('sedangEksekusiSerangan', true);
+            enemy.setVelocity(0);
+
+            // 1. Jeda sebelum menyerang (Wind-up)
+            this.time.delayedCall(500, () => {
+                if (!enemy || !enemy.active) return;
+
+                // 2. Persiapan Animasi Tebasan (Slash)
+                let sudutKePlayer = Phaser.Math.Angle.Between(enemy.x, enemy.y, player.x, player.y);
+                let sudutDerajat = Phaser.Math.RadToDeg(sudutKePlayer);
+                
+                let visualSlash = this.add.graphics();
+                visualSlash.setDepth(998);
+
+                let efek = { progress: 0, alpha: 1 };
+
+                // 3. Animasi Ayunan (Tween)
+                this.tweens.add({
+                    targets: efek,
+                    progress: 1,
+                    alpha: 0,
+                    duration: 150, // Durasi ayunan
+                    ease: 'Quad.easeOut',
+                    onUpdate: () => {
+                        visualSlash.clear();
+                        visualSlash.lineStyle(6, 0xff0000, efek.alpha);
+                        visualSlash.beginPath();
+                        
+                        // Ayunan 90 derajat (seperempat lingkaran)
+                        let startAngle = sudutDerajat - 45 + (efek.progress * 45);
+                        let endAngle = sudutDerajat + 45 - ((1 - efek.progress) * 45);
+                        
+                        visualSlash.arc(enemy.x, enemy.y, 60, 
+                            Phaser.Math.DegToRad(startAngle), 
+                            Phaser.Math.DegToRad(endAngle), false);
+                        visualSlash.strokePath();
+                    },
+                    onComplete: () => {
+                        visualSlash.destroy();
+                    }
+                });
+
+                // 4. Deteksi Damage (hanya jika player masih di area)
+                let jarakKeTarget = Phaser.Math.Distance.Between(player.x, player.y, enemy.x, enemy.y);
+                if (jarakKeTarget < 70 && hp > 0) {
+                    hp -= enemy.getData('damageSerangan');
+                    hpText.setText('HP: ' + hp);
+                    
+                    isKnockback = true;
+                    bikinKnockback(player, enemy, enemy.getData('kekuatanDorong'));
+                    this.time.delayedCall(200, () => { isKnockback = false; }, [], this);
+                    
+                    player.setTint(0xff0000);
+                    this.time.delayedCall(150, () => { if(hp > 0) player.clearTint(); }, [], this);
+                }
+
+                // 5. Game Over
+                if (hp <= 0) {
+                    hp = 0;
+                    this.physics.pause();
+                    this.scene.start('SceneGameOver');
+                    return;
+                }
+
+                // 6. Jeda pasca serang
+                this.time.delayedCall(Phaser.Math.Between(500, 1000), () => {
+                    if (enemy && enemy.active) enemy.setData('sedangEksekusiSerangan', false);
+                });
+            });
         }
     }
 
@@ -1358,6 +1445,8 @@
     let enemyGroup;
     let wasd; // Variabel baru untuk menampung tombol WASD
 
+    const JANGKAUAN_SERANGAN = 50;
+
     this.sudutBidikanTerakhir = 0;
 
     let skor = 0;       // Nilai skor awal game
@@ -1377,13 +1466,7 @@
 
     let arahTerakhir = 'kanan'; // Pilihan: 'kiri', 'kanan', 'atas', 'bawah'
 
-    // --- VARIABEL ATURAN MUSUH (Bisa Anda ubah sesuai selera) ---
-    const KECEPATAN_MUSUH = 100;   // Kecepatan lari musuh saat mengejar
-    const RADIUS_DETEKSI = 320;     // Jarak radius (dalam piksel) musuh mulai mendeteksi player
     const JUMLAH_SPAWN_TITIK = 100;  // Berapa banyak lokasi kelompok musuh yang mau disebar di map
-
-    // --- CONFIG JANGKAUAN SERANGAN PLAYER ---
-    const JANGKAUAN_SERANGAN = 50; // Ubah angka piksel ini untuk mengatur seberapa jauh tebasannya
 
     // --- FUNGSI ASISTEN UNTUK MENGHITUNG ARAH DORONGAN ---
     function bikinKnockback(player, enemy, kekuatan) {
@@ -1395,28 +1478,30 @@
         player.setVelocityY(Math.sin(sudut) * kekuatan);
     }
 
-    // --- REGISTER DATA JENIS-JENIS MUSUH (SANGAT MUDAH DITAMBAH) ---
     const PROFIL_MUSUH = {
         'kroco': {
             texture: 'musuh',
             hpMax: 40,
-            kecepatan: 100,
-            radiusDeteksi: 300,
+            kecepatan: 100,         // Kecepatan lari
+            radiusDeteksi: 200,     // Jarak musuh mulai mengejar
+            radiusSerang: 40,       // Jarak musuh berhenti untuk memukul
             damage: 10,
+            kekuatanDorong: 400,
             warnaTeks: '#ff0000',
             skorPoin: 10
         },
         'elite': {
-            texture: 'musuh', // Nanti bisa diganti key texture gambar lain
-            hpMax: 120,
-            kecepatan: 140,
-            radiusDeteksi: 450,
-            damage: 20,
+            texture: 'musuh', 
+            hpMax: 40,
+            kecepatan: 100,         // Kecepatan lari
+            radiusDeteksi: 200,     // Jarak musuh mulai mengejar
+            radiusSerang: 40,       // Jarak musuh berhenti untuk memukul
+            damage: 10,
+            kekuatanDorong: 400,
             warnaTeks: '#ffaa00',
-            skorPoin: 30
+            skorPoin: 10
         }
     };
 </script>
-
 </body>
 </html>
