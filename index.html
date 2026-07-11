@@ -73,10 +73,18 @@
 
         preload() {
             // Mengambil gambar aset gratis dari internet sebagai contoh placeholder
-            this.load.image('lantai', 'assets/land/tanah.jpg'); // Ganti dengan URL gambar lantai Anda nanti
-            this.load.image('karakter', 'assets/character/Subjek.png');
+            this.load.image('lantai', 'assets/land/tanah.jpg');
             this.load.image('batu', 'assets/land/Subjek.png');
             this.load.image('musuh', 'assets/enemy/Subjek.png');
+
+            this.load.image('player_bawah', 'assets/character/char/depan.png');
+            this.load.image('player_atas', 'assets/character/char/belakang.png');
+            this.load.image('player_kiri', 'assets/character/char/kiri.png');
+            this.load.image('player_kanan', 'assets/character/char/kanan.png');
+            this.load.image('player_kanan_bawah', 'assets/character/char/kanan-bawah.png');
+            this.load.image('player_kanan_atas', 'assets/character/char/kanan-atas.png');
+            this.load.image('player_kiri_bawah', 'assets/character/char/kiri-bawah.png');
+            this.load.image('player_kiri_atas', 'assets/character/char/kiri-atas.png');
         }
 
         create() {
@@ -200,9 +208,9 @@
                 // Memperbarui badan fisika batu agar pas dengan ukuran display yang baru dikustomisasi
                 batu.refreshBody(); 
             }
-
-            // 3. Menaruh karakter di tengah-tengah map yang luas tersebut
-            player = this.physics.add.image(MAP_WIDTH / 2, MAP_HEIGHT / 2, 'karakter');
+            
+            player = this.physics.add.image(MAP_WIDTH / 2, MAP_HEIGHT / 2, 'player_bawah');
+            this.arahTerakhir = 'player_bawah';
             player.setCollideWorldBounds(true); // Karakter akan tertahan di batas luar MAP_WIDTH & MAP_HEIGHT
             this.physics.add.collider(player, batuGroup);
 
@@ -390,47 +398,42 @@
                 return; // Hentikan kalkulasi frame gerakan saat pause dipicu
             }
             
-            // 1. DAFTARKAN PAD PERTAMA JIKA TERHUBUNG
-            let pad = this.input.gamepad.total ? this.input.gamepad.getPad(0) : null;
+            // 1. Ambil data input
+let pad = this.input.gamepad.total ? this.input.gamepad.getPad(0) : null;
+let pointer = this.input.activePointer;
+const DEADZONE_ANALOG = 0.25;
 
-            // =================================================================
-            // --- PERBAIKAN LOGIKA: LOCK ORIENTATION (MURNI MEMORI ANALOG KANAN) ---
-            // =================================================================
-            let pointer = this.input.activePointer;
-            const DEADZONE_ANALOG = 0.25; // Naikkan sedikit deadzone agar lebih stabil
-            
-            let analogKananX = pad ? pad.axes[2].value : 0;
-            let analogKananY = pad ? pad.axes[3].value : 0;
-            
-            // Cek apakah ada input aktif pada analog kanan
-            let analogKananAktif = pad && (Math.abs(analogKananX) > DEADZONE_ANALOG || Math.abs(analogKananY) > DEADZONE_ANALOG);
+let targetX = pad ? pad.axes[2].value : (pointer.worldX - player.x);
+let targetY = pad ? pad.axes[3].value : (pointer.worldY - player.y);
+let aktif = pad ? (Math.abs(targetX) > DEADZONE_ANALOG || Math.abs(targetY) > DEADZONE_ANALOG) : true;
 
-            if (analogKananAktif) {
-                // 1. Simpan sudut radian aktual saat analog didorong
-                this.sudutBidikanTerakhir = Math.atan2(analogKananY, analogKananX);
-                
-                // 2. Tentukan visual flip karakter dari stik kanan saja
-                if (analogKananX < -DEADZONE_ANALOG) {
-                    player.setFlipX(true);
-                    arahTerakhir = 'kiri';
-                } else if (analogKananX > DEADZONE_ANALOG) {
-                    player.setFlipX(false);
-                    arahTerakhir = 'kanan';
-                }
-            } else if (pad) {
-                // JIKA MENGGUNAKAN GAMEPAD & ANALOG KANAN DILEPAS: 
-                // Kunci total arah visual! Abaikan arah jalan analog kiri (axes[0] dan axes[1]).
-                // Karakter akan tetap menghadap ke posisi flipX terakhirnya secara permanen.
-            } else {
-                // JIKA MURNI MOUSE & KEYBOARD (Gamepad tidak aktif)
-                if (pointer.worldX < player.x) {
-                    player.setFlipX(true);
-                    arahTerakhir = 'kiri';
-                } else {
-                    player.setFlipX(false);
-                    arahTerakhir = 'kanan';
-                }
-            }
+if (aktif) {
+    this.sudutBidikanTerakhir = Math.atan2(targetY, targetX);
+    let sudutDerajat = Phaser.Math.RadToDeg(this.sudutBidikanTerakhir);
+
+    // Normalisasi sudut ke 0-360 derajat
+    if (sudutDerajat < 0) sudutDerajat += 360;
+
+    // Tentukan arah berdasarkan sudut
+    let arahBaru = '';
+
+    // Logika 8 arah berdasarkan sudut
+    if (sudutDerajat > 67.5 && sudutDerajat <= 112.5) arahBaru = 'player_bawah';
+    else if (sudutDerajat > 112.5 && sudutDerajat <= 157.5) arahBaru = 'player_kiri_bawah';
+    else if (sudutDerajat > 157.5 && sudutDerajat <= 202.5) arahBaru = 'player_kiri';
+    else if (sudutDerajat > 202.5 && sudutDerajat <= 247.5) arahBaru = 'player_kiri_atas';
+    else if (sudutDerajat > 247.5 && sudutDerajat <= 292.5) arahBaru = 'player_atas';
+    else if (sudutDerajat > 292.5 && sudutDerajat <= 337.5) arahBaru = 'player_kanan_atas';
+    else if (sudutDerajat > 337.5 || sudutDerajat <= 22.5) arahBaru = 'player_kanan';
+    else if (sudutDerajat > 22.5 && sudutDerajat <= 67.5) arahBaru = 'player_kanan_bawah';
+
+    // Update tekstur jika arah berubah
+    if (this.arahTerakhir !== arahBaru) {
+        player.setTexture(arahBaru);
+        this.arahTerakhir = arahBaru;
+        player.setFlipX(false); // Matikan flip karena sudah ada aset kanan/kiri
+    }
+}
 
             // 3. LOGIKA GERAKAN GABUNGAN (WASD/PANAH ATAU ANALOG KIRI)
             if (!isKnockback) {
