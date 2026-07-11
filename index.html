@@ -83,10 +83,12 @@
             // --- TAMBAHKAN BARIS RESET INI DI PALING ATAS CREATE SCENEGAME ---
             hp = 60;   // Sesuaikan dengan nyawa awal yang Anda inginkan (60)
             skor = 0;
+
+            this.sudutBidikanTerakhir = 0;
+
             isKnockback = false;
             isAttacking = false;
 
-            this.sudutBidikanTerakhir = 0;
             this.isDashing = false;
             this.isAimingSkill = false;
             this.waktuMulaiTekanSkill = 0;
@@ -99,6 +101,24 @@
             this.indikatorSkill = this.add.graphics();
             this.indikatorSkill.setDepth(997);
 
+            // Variabel Ultimate (Terpisah dari Dash)
+            this.isUltimating = false;
+            this.isAimingUlt = false;
+            this.waktuMulaiTekanUlt = 0;
+            this.ultBisaDigunakan = true; // Cooldown terpisah
+
+            // Input Ultimate
+            this.tombolUlti = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
+            this.indikatorUlt = this.add.graphics();
+            this.indikatorUlt.setDepth(997);
+
+            // Satu status cooldown BERSAMA untuk kedua varian ultimate
+            this.ultReady = true;
+
+            this.isUltCancelled = false;
+            this.isSkillCancelled = false; // Tambahkan di bagian inisialisasi variabel
+            this.tombolBatalC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C);
+
             // 1. Mengatur batas luas dunia game agar karakter tidak bisa jalan menembus batas map
             this.physics.world.setBounds(0, 0, MAP_WIDTH, MAP_HEIGHT);
 
@@ -108,6 +128,59 @@
             background.setOrigin(0, 0); // Mengatur titik tumpu gambar di pojok kiri atas
 
             batuGroup = this.physics.add.staticGroup();
+
+            this.time.addEvent({
+                delay: 200, 
+                loop: true,
+                callback: () => {
+                    if (!enemyGroup) return; // Proteksi tambahan
+                    enemyGroup.getChildren().forEach((enemy) => {
+                        // Jika knockback, skip AI
+                        if (enemy.getData('sedangKnockback')) {
+                            enemy.setVelocityX(enemy.body.velocity.x * 0.9);
+                            enemy.setVelocityY(enemy.body.velocity.y * 0.9);
+                            return; 
+                        }
+
+                        // Jika musuh sedang dalam animasi serangan/jeda, biarkan dia tetap diam
+                        if (enemy.getData('sedangEksekusiSerangan')) {
+                            enemy.setVelocity(0);
+                            return;
+                        }
+
+                        let jarak = Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y);  
+
+                        // Ambil statistik musuh spesifik dari datanya sendiri
+                        let batasDeteksi = enemy.getData('radiusDeteksi');
+                        let batasSerang = enemy.getData('radiusSerang');
+                        let speedMusuh = enemy.getData('kecepatanKustom'); // Sekarang dinamis!
+
+                        // LOGIKA PERILAKU:
+                        if (jarak <= batasSerang) {
+                            // 1. Jika di dalam radius serang: Berhenti, lalu panggil fungsi serangan
+                            enemy.setVelocity(0);
+                            // PERBAIKAN: Cek tipe musuh untuk memanggil fungsi serangan yang benar
+                            let tipe = enemy.getData('tipe');
+                            if (tipe === 'big') {
+                                this.prosesSeranganBig(player, enemy);
+                            } else {
+                                this.prosesSeranganKroco(player, enemy);
+                            }
+                        } else if (jarak < batasDeteksi) {
+                            // 2. Jika di dalam radius deteksi tapi luar radius serang: KEJAR
+                            this.physics.moveToObject(enemy, player, speedMusuh);
+                            enemy.setFlipX(player.x < enemy.x);
+                        } else {
+                            // 3. Jika terlalu jauh: Diam
+                            enemy.setVelocity(0);
+                        }
+                        
+                        // Update teks HP
+                        let tks = enemy.getData('hpTextObject');
+                        if (tks) tks.setPosition(enemy.x, enemy.y - 40);
+                    });
+                }
+            });
 
             // ATUR JUMLAH BATU DI SINI (Ubah angka ini sesuai selera Anda)
             const JUMLAH_BATU = 440; 
@@ -173,7 +246,8 @@
                     let spawnY = pusatY + Phaser.Math.Between(-40, 40);
                     let beradaDiDalamLayar = true;
 
-                    while (beradaDiDalamLayar) { // <--- AWAL TRAP LOOPING TANPA BATAS
+                    let percobaan = 0;
+                    while (beradaDiDalamLayar && percobaan < 20) { // <--- AWAL TRAP LOOPING TANPA BATAS
                         spawnX = Phaser.Math.Between(200, MAP_WIDTH - 200);
                         spawnY = Phaser.Math.Between(200, MAP_HEIGHT - 200);
 
@@ -184,9 +258,19 @@
                         if (!diDalamX || !diDalamY) {
                             beradaDiDalamLayar = false; // <--- Sinyal ini tidak pernah terpicu!
                         }
+                        percobaan++;
                     } // <--- AKHIR TRAP
 
-                    let tipeDipilih = (Phaser.Math.Between(1, 100) <= 80) ? 'kroco' : 'elite';
+                    // Ganti baris penentuan tipe musuh menjadi ini:
+                    let angkaAcak = Phaser.Math.Between(1, 100);
+                    let tipeDipilih = 'kroco'; 
+                    if (angkaAcak <= 70) {
+                        tipeDipilih = 'kroco';
+                    } else if (angkaAcak <= 90) {
+                        tipeDipilih = 'elite';
+                    } else {
+                        tipeDipilih = 'big'; // 10% peluang spawn musuh Big
+                    }
                     this.bikinMusuh(spawnX, spawnY, tipeDipilih);
                 }
             }
@@ -231,13 +315,6 @@
 
             let faktorZoom = 2.5;
             uiContainer.setScale(1 / faktorZoom);
-            uiContainer.setPosition(
-                (this.scale.width / 2) * (1 - 1 / faktorZoom),
-                (this.scale.height / 2) * (1 - 1 / faktorZoom)
-            );
-            uiContainer.setScale(1 / faktorZoom);
-
-            // Sesuaikan posisi container ke pojok kiri atas area pandang kamera yang menciut
             uiContainer.setPosition(
                 (this.scale.width / 2) * (1 - 1 / faktorZoom),
                 (this.scale.height / 2) * (1 - 1 / faktorZoom)
@@ -388,70 +465,43 @@
                 this.eksekusiSerangan();
             }
 
-            enemyGroup.getChildren().forEach((enemy) => {
-                // Jika knockback, skip AI
-                if (enemy.getData('sedangKnockback')) {
-                    enemy.setVelocityX(enemy.body.velocity.x * 0.9);
-                    enemy.setVelocityY(enemy.body.velocity.y * 0.9);
-                    return; 
-                }
-
-                // Jika musuh sedang dalam animasi serangan/jeda, biarkan dia tetap diam
-                if (enemy.getData('sedangEksekusiSerangan')) {
-                    enemy.setVelocity(0);
-                    return;
-                }
-
-                let jarak = Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y);  
-
-                // Ambil statistik musuh spesifik dari datanya sendiri
-                let batasDeteksi = enemy.getData('radiusDeteksi');
-                let batasSerang = enemy.getData('radiusSerang');
-                let speedMusuh = enemy.getData('kecepatanKustom'); // Sekarang dinamis!
-
-                // LOGIKA PERILAKU:
-                if (jarak <= batasSerang) {
-                    // 1. Jika di dalam radius serang: Berhenti, lalu panggil fungsi serangan
-                    enemy.setVelocity(0);
-                    this.prosesSeranganKroco(player, enemy);
-                } else if (jarak < batasDeteksi) {
-                    // 2. Jika di dalam radius deteksi tapi luar radius serang: KEJAR
-                    this.physics.moveToObject(enemy, player, speedMusuh);
-                    enemy.setFlipX(player.x < enemy.x);
-                } else {
-                    // 3. Jika terlalu jauh: Diam
-                    enemy.setVelocity(0);
-                }
-                
-                // Update teks HP
-                let tks = enemy.getData('hpTextObject');
-                if (tks) tks.setPosition(enemy.x, enemy.y - 40);
-            });
-
             // =================================================================
             // --- LOGIKA PEMICU SKILL DASH (HOLD & RELEASE / TAP) ---
             // =================================================================
             if (!this.isDashing && hp > 0 && this.skillBisaDigunakan) {
                 let rtDitekan = pad && pad.buttons[7] && pad.buttons[7].pressed;
                 let eDitekan = this.tombolSkill.isDown;
+                
+                // Tombol Batal: C (Keyboard) atau A (Gamepad Index 0)
+                let batalDitekan = this.tombolBatalC.isDown || (pad && pad.buttons[0] && pad.buttons[0].pressed);
 
-                // Tentukan sudut bidikan berdasarkan perangkat yang aktif
-                let sudutDash = this.sudutBidikanTerakhir; // Default mengikuti memori stik kanan
+                // 1. Cek Pembatalan
+                if (this.isAimingSkill && batalDitekan) {
+                    this.indikatorSkill.clear();
+                    this.isAimingSkill = false;
+                    this.isSkillCancelled = true; // Kunci supaya tidak dash saat tombol E/RT dilepas
+                }
+
+                // 2. Jika tombol dash (E/RT) dilepas, reset status cancel
+                if (!(eDitekan || rtDitekan)) {
+                    this.isSkillCancelled = false;
+                }
+
+                // Tentukan sudut bidikan
+                let sudutDash = this.sudutBidikanTerakhir;
                 if (!pad) {
                     sudutDash = Phaser.Math.Angle.Between(player.x, player.y, pointer.worldX, pointer.worldY);
                 }
 
-                if (eDitekan || rtDitekan) {
-                    // Jika baru pertama kali ditekan, tandai sedang membidik (Aiming)
+                // 3. Logika Membidik (Hanya jalan jika TIDAK sedang di-cancel)
+                if ((eDitekan || rtDitekan) && !this.isSkillCancelled) {
                     if (!this.isAimingSkill) {
                         this.isAimingSkill = true;
-                        this.waktuMulaiTekanSkill = time; // Catat waktu untuk membedakan TAP dan HOLD
+                        this.waktuMulaiTekanSkill = time;
                     }
 
-                    // Hapus gambar frame sebelumnya sebelum menggambar indikator baru
                     this.indikatorSkill.clear();
 
-                    // EFEK HOLD: Jika ditekan lebih dari 150 milidetik, munculkan indikator panah bidikan
                     if (time - this.waktuMulaiTekanSkill > 150) {
                         const JARAK_DASH = 150; // Jarak jangkauan dash
                         let targetX = player.x + Math.cos(sudutDash) * JARAK_DASH;
@@ -468,41 +518,102 @@
                         this.indikatorSkill.fillStyle(0xffffff, 0.8);
                         this.indikatorSkill.fillCircle(targetX, targetY, 6);
                     }
-                } else {
-                    // KETIKA TOMBOL DILEPAS (RELEASE)
-                    if (this.isAimingSkill) {
-                        this.indikatorSkill.clear(); // Hapus indikator dari layar
-                        this.isAimingSkill = false;
-
-                        // Eksekusi skill dash menggunakan sudut yang telah ditentukan saat tombol dilepas
-                        this.eksekusiSkillDash(sudutDash);
-                    }
+                } 
+                // 4. Eksekusi Dash (Hanya jika sedang membidik dan tombol dilepas)
+                else if (!eDitekan && !rtDitekan && this.isAimingSkill) {
+                    this.indikatorSkill.clear();
+                    this.isAimingSkill = false;
+                    this.eksekusiSkillDash(sudutDash);
                 }
             }
 
             // =================================================================
-            // --- LOGIKA RENDER UI TEKS STATUS DEFAULT ABU-ABU ---
+            // --- LOGIKA PEMICU SKILL ULTIMATE (Q / LT) ---
+            // =================================================================
+            if (!this.isUltimating && hp > 0 && this.ultReady) {
+                let ltDitekan = pad && pad.buttons[6] && pad.buttons[6].pressed; 
+                let qDitekan = this.tombolUlti.isDown;
+                let batalDitekan = this.tombolBatalC.isDown || (pad && pad.buttons[0] && pad.buttons[0].pressed);
+
+                if (this.isAimingUlt && batalDitekan) {
+                    this.indikatorUlt.clear();
+                    this.isAimingUlt = false;
+                    this.isUltCancelled = true;
+                }
+                if (!(qDitekan || ltDitekan)) this.isUltCancelled = false;
+
+                let sudutUlt = this.sudutBidikanTerakhir;
+                if (!pad) sudutUlt = Phaser.Math.Angle.Between(player.x, player.y, pointer.worldX, pointer.worldY);
+
+                if ((qDitekan || ltDitekan) && !this.isUltCancelled) {
+                    if (!this.isAimingUlt) {
+                        this.isAimingUlt = true;
+                        this.waktuMulaiTekanUlt = time;
+                    }
+                    this.indikatorUlt.clear();
+                    if (time - this.waktuMulaiTekanUlt > 150) {
+                        if (this.tipeUltTerakhir === 'dash') {
+                            // Indikator garis untuk Ulti Dash (arah & jarak tujuan)
+                            const JARAK_ULT = 220; 
+                            let targetX = player.x + Math.cos(sudutUlt) * JARAK_ULT;
+                            let targetY = player.y + Math.sin(sudutUlt) * JARAK_ULT;
+                            this.indikatorUlt.lineStyle(12, 0xffffff, 0.5); 
+                            this.indikatorUlt.beginPath();
+                            this.indikatorUlt.moveTo(player.x, player.y);
+                            this.indikatorUlt.lineTo(targetX, targetY);
+                            this.indikatorUlt.strokePath();
+                            this.indikatorUlt.fillStyle(0xffffff, 0.8);
+                            this.indikatorUlt.fillCircle(targetX, targetY, 12);
+                        } else {
+                            // Indikator donat untuk Ulti Lingkaran (radius area serangan)
+                            const RADIUS_LINGKARAN = 100; // Samakan dengan radius damage di eksekusiSkillUltimateLingkaran
+                            const TEBAL_DONAT = 40;
+                            this.indikatorUlt.lineStyle(TEBAL_DONAT, 0xffffff, 0.6);
+                            this.indikatorUlt.strokeCircle(player.x, player.y, RADIUS_LINGKARAN);
+                        }
+                    }
+                } else if (!qDitekan && !ltDitekan && this.isAimingUlt) {
+                    this.indikatorUlt.clear();
+                    this.isAimingUlt = false;
+                    
+                    if (this.tipeUltTerakhir === 'dash') {
+                        if (this.ultReady) {
+                            this.eksekusiSkillUltimate(sudutUlt);
+                        }
+                    } else {
+                        if (this.ultReady) {
+                            this.eksekusiSkillUltimateLingkaran(sudutUlt);
+                        }
+                    }
+                }
+            }
+        
+            // =================================================================
+            // --- LOGIKA RENDER UI TEKS STATUS ---
             // =================================================================
             if (this.cdText) {
-                let adaDarahBiruAktif = enemyGroup.getChildren().some(enemy => enemy.getData('statusTandaBiru') === true);
+                // 1. Cek apakah ada musuh yang BENAR-BENAR masih bertanda biru
+                let adaDarahBiruAktif = enemyGroup.getChildren().some(e => e.getData('statusTandaBiru') === true);
 
+                // 2. Gunakan status musuh sebagai acuan utama, bukan hanya variabel waktu
                 if (adaDarahBiruAktif) {
-                    let sisaWaktuBiru = (this.waktuSelesaiDarahBiru - time) / 1000;
+                    let sisaWaktu = (this.waktuSelesaiDarahBiru - time) / 1000;
                     
-                    if (sisaWaktuBiru > 0) {
-                        this.cdText.setText('DASH: ' + sisaWaktuBiru.toFixed(1) + 's');
-                        this.cdText.setStyle({ fill: '#ff3333' }); // Tetap merah menyala saat countdown berjalan
+                    if (sisaWaktu > 0) {
+                        this.cdText.setText('DASH: ' + sisaWaktu.toFixed(1) + 's');
+                        this.cdText.setStyle({ fill: '#888888' }); // Warna biru saat aktif
                     } else {
+                        // Jika waktu habis tapi musuh belum reset, paksa reset ke GA AKTIF
                         this.cdText.setText('DASH: GA AKTIF');
                         this.cdText.setStyle({ fill: '#888888' });
                     }
                 } else {
-                    // Jika tidak ada darah biru yang menyala, UI otomatis terkunci ke GA AKTIF warna abu-abu
+                    // Jika tidak ada musuh yang aktif, pastikan teks selalu GA AKTIF
                     this.cdText.setText('DASH: GA AKTIF');
                     this.cdText.setStyle({ fill: '#888888' });
                 }
             }
-        } 
+        }
 
         // --- TARUH METHOD PAUSE MANDIRI ANDA DI SINI (DI LUAR UPDATE) ---
         pemicuPause() {
@@ -527,6 +638,7 @@
 
         eksekusiSerangan() {
             if (isAttacking || hp <= 0 || !attackVisual) return;
+            this.tipeUltTerakhir = 'serangan';
 
             const JANGKAUAN = JANGKAUAN_SERANGAN;
             let pointer = this.input.activePointer;
@@ -660,6 +772,7 @@
         }
 
         tebasMusuh(zone, enemy) {
+            if (!enemy || !enemy.active) return;
             if (zone.body.embedded || enemy.getData('baruKenaTebas')) return;
             
             enemy.setData('baruKenaTebas', true);
@@ -741,6 +854,7 @@
     
         eksekusiSkillDash(sudutRadian) {
             if (this.isDashing || !this.skillBisaDigunakan) return;
+            this.tipeUltTerakhir = 'dash';
 
             this.isDashing = true;
             this.skillBisaDigunakan = false; 
@@ -998,6 +1112,238 @@
             }, [], this);
         }
 
+        eksekusiSkillUltimate(sudutRadian) {
+            if (this.isUltimating || !this.ultReady) return;
+            this.isUltimating = true;
+            this.ultReady = false;
+
+            isKnockback = true; 
+
+            const KECEPATAN_ULTI = 2500;    // Lebih cepat (Dash: 2000)
+            const DURASI_ULTI = 300;        // Lebih lama (Dash: 100)
+            const DAMAGE_ULTI = 24;         // Jauh lebih sakit (Dash: 16)
+
+            // =================================================================
+            // --- FIX MECHANIC: LAYANGAN STRETCH DINAMIS (EKOR DIKUNCI DI START) ---
+            // =================================================================
+            const titikAwalX = player.x;
+            const titikAwalY = player.y;
+
+            let efekPoligonDash = this.add.graphics();
+            efekPoligonDash.setDepth(995); 
+
+            let dataEfekPoligon = { alpha: 0.4 }; 
+
+            let penggambarPoligonRealtime = this.time.addEvent({
+                delay: 16, 
+                loop: true,
+                callback: () => {
+                    if (efekPoligonDash?.active) {
+                        efekPoligonDash.clear();
+                        efekPoligonDash.fillStyle(0x00ffff, dataEfekPoligon.alpha);
+
+                        let sudutTegakLurus = sudutRadian + Math.PI / 2;
+                        
+                        // --- KONFIGURASI UKURAN LAYANGAN STRETCH ---
+                        const LEBAR_SAYAP = 20;         // Lebar bentangan sayap kiri-kanan
+                        const JARAK_LANCIP_DEPAN = 15;   // Kepala lancip PENDEK BANGET menempel di posisi player (bisa diatur)
+                        const JARAK_SAYAP_DARI_DEPAN = 25; // Jarak sayap dihitung mundur dari posisi player saat ini
+
+                        // Titik 1: Ekor Paling Belakang (DIKUNCI MATI di titik awal game saat start dash)
+                        let ekorX = titikAwalX;
+                        let ekorY = titikAwalY;
+
+                        // Titik 4: Kepala Lancip Pendek (Mengikuti persis di titik depan player)
+                        let kepalaX = player.x + Math.cos(sudutRadian) * JARAK_LANCIP_DEPAN;
+                        let kepalaY = player.y + Math.sin(sudutRadian) * JARAK_LANCIP_DEPAN;
+
+                        // Titik 2 & 3: Sayap Kiri & Kanan (Posisinya dinamis, ikut maju mengikuti player)
+                        let titikPusatSayapX = player.x - Math.cos(sudutRadian) * JARAK_SAYAP_DARI_DEPAN;
+                        let titikPusatSayapY = player.y - Math.sin(sudutRadian) * JARAK_SAYAP_DARI_DEPAN;
+                        
+                        let sayapKiriX = titikPusatSayapX + Math.cos(sudutTegakLurus) * LEBAR_SAYAP;
+                        let sayapKiriY = titikPusatSayapY + Math.sin(sudutTegakLurus) * LEBAR_SAYAP;
+                        let sayapKananX = titikPusatSayapX - Math.cos(sudutTegakLurus) * LEBAR_SAYAP;
+                        let sayapKananY = titikPusatSayapY - Math.sin(sudutTegakLurus) * LEBAR_SAYAP;
+
+                        // Susun formasi layangan melar
+                        let kumpulanTitikLayangan = [
+                            new Phaser.Geom.Point(ekorX, ekorY),
+                            new Phaser.Geom.Point(sayapKiriX, sayapKiriY),
+                            new Phaser.Geom.Point(kepalaX, kepalaY), 
+                            new Phaser.Geom.Point(sayapKananX, sayapKananY)
+                        ];
+
+                        efekPoligonDash.fillPoints(kumpulanTitikLayangan, true);
+                    }
+                }
+            });
+
+            player.body.checkCollision.none = true;
+
+            this.time.delayedCall(10, () => {
+                if(player && player.body) {
+                    player.setVelocityX(Math.cos(sudutRadian) * KECEPATAN_ULTI);
+                    player.setVelocityY(Math.sin(sudutRadian) * KECEPATAN_ULTI);
+                }
+            });
+            player.setTint(0x00ffff); 
+
+            let dashHitbox = this.physics.add.image(player.x, player.y, null);
+            dashHitbox.setDisplaySize(player.displayWidth * 1.5, player.displayHeight * 1.5);
+            dashHitbox.body.setAllowGravity(false);
+            dashHitbox.setVisible(false);
+
+            let overlapUlt = this.physics.add.overlap(dashHitbox, enemyGroup, (hitbox, enemy) => {
+                if (enemy.getData('terkenaDamageUlti')) return; 
+                enemy.setData('terkenaDamageUlti', true);
+                
+                let darahMusuh = enemy.getData('enemyHp') - DAMAGE_ULTI;
+                enemy.setData('enemyHp', darahMusuh);
+                this.munculkanTeksDamage(enemy.x, enemy.y, DAMAGE_ULTI);
+
+                let tks = enemy.getData('hpTextObject');
+                if (tks) tks.setText(darahMusuh);
+
+                enemy.setData('sedangKnockback', true);
+                enemy.setVelocityX(Math.cos(sudutRadian) * 300);
+                enemy.setVelocityY(Math.sin(sudutRadian) * 300);
+                enemy.setTint(0xff0000);
+
+                this.time.delayedCall(200, () => {
+                    if (enemy && enemy.active) {
+                        enemy.clearTint();
+                        enemy.setData('sedangKnockback', false);
+                        enemy.setData('terkenaDamageUlti', false);
+                    }
+                });
+
+                if (darahMusuh <= 0) this.tebasMusuh({ body: { embedded: false } }, enemy);
+            }, null, this);
+
+            let pengikutPosisi = this.time.addEvent({
+                delay: 16, loop: true,
+                callback: () => {
+                    if (dashHitbox && dashHitbox.body) dashHitbox.setPosition(player.x, player.y);
+                }
+            });
+
+            // =============================================================
+            // LOGIKA SELESAI ULTIMATE DIUBAH
+            // =============================================================
+            this.time.delayedCall(DURASI_ULTI, () => { // Pakai DURASI_ULTI
+                player.clearTint();
+                player.setVelocity(0);
+                isKnockback = false;
+                this.isUltimating = false;    // Diubah
+                player.body.checkCollision.none = false;
+
+                if (penggambarPoligonRealtime) penggambarPoligonRealtime.destroy();
+                if (pengikutPosisi) pengikutPosisi.destroy();
+                if (overlapUlt) overlapUlt.destroy();
+                if (dashHitbox) dashHitbox.destroy();
+
+                this.tweens.add({
+                    targets: dataEfekPoligon,
+                    alpha: 0,
+                    duration: 200,
+                    ease: 'Cubic.easeOut',
+                    onUpdate: () => {
+                        if (efekPoligonDash) {
+                            efekPoligonDash.clear();
+                            // DIUBAH: Warna Sesuai tema (Biru Cyan)
+                            efekPoligonDash.fillStyle(0x00ffff, dataEfekPoligon.alpha);
+
+                            let sudutTegakLurus = sudutRadian + Math.PI / 2;
+                            const LEBAR_SAYAP = 20;
+                            const JARAK_LANCIP_DEPAN = 15;
+                            const JARAK_SAYAP_DARI_DEPAN = 25;
+
+                            let ekorX = titikAwalX;
+                            let ekorY = titikAwalY;
+                            let kepalaX = player.x + Math.cos(sudutRadian) * JARAK_LANCIP_DEPAN;
+                            let kepalaY = player.y + Math.sin(sudutRadian) * JARAK_LANCIP_DEPAN;
+                            let titikPusatSayapX = player.x - Math.cos(sudutRadian) * JARAK_SAYAP_DARI_DEPAN;
+                            let titikPusatSayapY = player.y - Math.sin(sudutRadian) * JARAK_SAYAP_DARI_DEPAN;
+                            let sayapKiriX = titikPusatSayapX + Math.cos(sudutTegakLurus) * LEBAR_SAYAP;
+                            let sayapKiriY = titikPusatSayapY + Math.sin(sudutTegakLurus) * LEBAR_SAYAP;
+                            let sayapKananX = titikPusatSayapX - Math.cos(sudutTegakLurus) * LEBAR_SAYAP;
+                            let sayapKananY = titikPusatSayapY - Math.sin(sudutTegakLurus) * LEBAR_SAYAP;
+
+                            let kumpulanTitikFinal = [
+                                new Phaser.Geom.Point(ekorX, ekorY),
+                                new Phaser.Geom.Point(sayapKiriX, sayapKiriY),
+                                new Phaser.Geom.Point(kepalaX, kepalaY),
+                                new Phaser.Geom.Point(sayapKananX, sayapKananY)
+                            ];
+                            efekPoligonDash.fillPoints(kumpulanTitikFinal, true);
+                        }
+                    },
+                    onComplete: () => {
+                        if (efekPoligonDash) efekPoligonDash.destroy();
+                    }
+                });
+                // 3. Cooldown
+                this.time.delayedCall(16000, () => {
+                    this.ultReady = true;
+                    // Hanya set tint jika player masih aktif
+                    if (player && player.active) {
+                        player.setTint(0x00ffff);
+                        this.time.delayedCall(100, () => { if(player.active) player.clearTint(); });
+                    }
+                }, [], this);
+            }, [], this);
+        }
+
+        eksekusiSkillUltimateLingkaran(sudutRadian) {
+            if (this.isUltimating || !this.ultReady) return;
+            this.isUltimating = true;
+            this.ultReady = false;
+
+            // Efek Visual Lingkaran
+            let lingkaran = this.add.circle(player.x, player.y, 100, 0x00ffff, 0.3);
+            this.tweens.add({
+                targets: lingkaran,
+                scale: 2,
+                alpha: 0,
+                duration: 300,
+                onComplete: () => lingkaran.destroy()
+            });
+
+            // Deteksi Musuh di sekitar dalam radius 100
+            enemyGroup.getChildren().forEach(enemy => {
+                let jarak = Phaser.Math.Distance.Between(player.x, player.y, enemy.x, enemy.y);
+                if (jarak < 100) {
+                    // Berikan Damage (contoh 30)
+                    let darahBaru = enemy.getData('enemyHp') - 16;
+                    enemy.setData('enemyHp', darahBaru);
+                    this.munculkanTeksDamage(enemy.x, enemy.y, 16);
+                    if (enemy.getData('hpTextObject')) enemy.getData('hpTextObject').setText(darahBaru);
+
+                    // Berikan Dorongan (Knockback) keluar dari player
+                    let sudutDorong = Phaser.Math.Angle.Between(player.x, player.y, enemy.x, enemy.y);
+                    enemy.setVelocity(Math.cos(sudutDorong) * 400, Math.sin(sudutDorong) * 400);
+
+                    // --- FIX: kunci AI musuh sementara supaya velocity dorongan tidak langsung ditimpa ---
+                    enemy.setData('sedangKnockback', true);
+                    this.time.delayedCall(250, () => {
+                        if (enemy && enemy.active) {
+                            enemy.setData('sedangKnockback', false);
+                        }
+                    });
+
+                    if (darahBaru <= 0) this.tebasMusuh({ body: { embedded: false } }, enemy);
+                }
+            });
+            // --- INI FIX-NYA: lepas kunci isUltimating karena efek sudah selesai instan ---
+            this.isUltimating = false;
+
+            // Cooldown (2000ms = 2 detik; ganti ke 20000 kalau maksudnya 20 detik sesuai komentar asli)
+            this.time.delayedCall(8000, () => {
+                this.ultReady = true;
+            }, [], this);
+        }
+
         munculkanTeksDamage(x, y, jumlahDamage) {
             // Buat objek teks tepat di koordinat musuh saat terkena serangan
             let teksDamage = this.add.text(x + Phaser.Math.Between(-10, 10), y - 20, jumlahDamage, {
@@ -1160,6 +1506,90 @@
                     if (enemy && enemy.active) enemy.setData('sedangEksekusiSerangan', false);
                 });
             });
+        }
+    
+        prosesSeranganBig(player, enemy) {
+            if (!enemy.active || enemy.getData('sedangEksekusiSerangan')) return;
+    
+            enemy.setData('sedangEksekusiSerangan', true);
+            enemy.setData('jumlahSerangan', 0);
+
+            const loopSerangan = () => {
+                // 1. CEK JARAK: Jika musuh kabur (jarak > radius), BATALKAN KOMBO
+                let jarak = Phaser.Math.Distance.Between(player.x, player.y, enemy.x, enemy.y);
+                let batasSerang = enemy.getData('radiusSerang');
+                
+                if (jarak > batasSerang || !enemy.active) {
+                    enemy.setData('sedangEksekusiSerangan', false);
+                    return; // Kombo batal, dia akan kembali ke AI utama untuk mengejar
+                }
+
+                // 2. CEK LIMIT KOMBO: Jika sudah 3x, berhenti
+                if (enemy.getData('jumlahSerangan') >= 3) {
+                    enemy.setData('sedangEksekusiSerangan', false);
+                    return;
+                }
+
+                enemy.setVelocity(0);
+                
+                // Jeda wind-up (0.5 detik)
+                enemy.scene.time.delayedCall(500, () => {
+                    if (!enemy.active) return;
+
+                    let sudutKePlayer = Phaser.Math.Angle.Between(enemy.x, enemy.y, player.x, player.y);
+                    let sudutDerajat = Phaser.Math.RadToDeg(sudutKePlayer);
+                    
+                    // Efek visual seperempat lingkaran
+                    let visualSlash = enemy.scene.add.graphics();
+                    visualSlash.setDepth(998);
+                    let efek = { progress: 0, alpha: 1 };
+
+                    enemy.scene.tweens.add({
+                        targets: efek,
+                        progress: 1,
+                        alpha: 0,
+                        duration: 150,
+                        ease: 'Quad.easeOut',
+                        onUpdate: () => {
+                            visualSlash.clear();
+                            visualSlash.lineStyle(8, 0xff0000, efek.alpha); // Lebih tebal karena musuh Big
+                            visualSlash.beginPath();
+                            
+                            let startAngle = sudutDerajat - 45 + (efek.progress * 45);
+                            let endAngle = sudutDerajat + 45 - ((1 - efek.progress) * 45);
+                            
+                            visualSlash.arc(enemy.x, enemy.y, 80, // Radius lebih besar (80)
+                                Phaser.Math.DegToRad(startAngle), 
+                                Phaser.Math.DegToRad(endAngle), false);
+                            visualSlash.strokePath();
+                        },
+                        onComplete: () => visualSlash.destroy()
+                    });
+
+                    // Cek damage ke player
+                    let jarak = Phaser.Math.Distance.Between(player.x, player.y, enemy.x, enemy.y);
+                    if (jarak < 100 && hp > 0) {
+                        hp -= enemy.getData('damageSerangan');
+                        hpText.setText('HP: ' + hp);
+                        
+                        // Cek Game Over
+                        if (hp <= 0) {
+                            hp = 0;
+                            enemy.scene.physics.pause();
+                            enemy.scene.scene.start('SceneGameOver');
+                            return;
+                        }
+
+                        player.setTint(0xff0000);
+                        enemy.scene.time.delayedCall(150, () => { if(player.active) player.clearTint(); });
+                        bikinKnockback(player, enemy, enemy.getData('kekuatanDorong'));
+                    }
+                    // Jeda antar serangan 0.5 detik
+                    enemy.scene.time.delayedCall(800, () => loopSerangan());
+                });
+            };
+
+            loopSerangan();
         }
     }
 
@@ -1447,8 +1877,6 @@
 
     const JANGKAUAN_SERANGAN = 50;
 
-    this.sudutBidikanTerakhir = 0;
-
     let skor = 0;       // Nilai skor awal game
     let skorText;       // Tempat menyimpan objek teks UI skor
 
@@ -1483,7 +1911,7 @@
             texture: 'musuh',
             hpMax: 40,
             kecepatan: 100,         // Kecepatan lari
-            radiusDeteksi: 200,     // Jarak musuh mulai mengejar
+            radiusDeteksi: 280,     // Jarak musuh mulai mengejar
             radiusSerang: 40,       // Jarak musuh berhenti untuk memukul
             damage: 10,
             kekuatanDorong: 400,
@@ -1500,6 +1928,17 @@
             kekuatanDorong: 400,
             warnaTeks: '#ffaa00',
             skorPoin: 10
+        },
+        'big': {
+            texture: 'musuh',
+            hpMax: 160,
+            kecepatan: 40, // Lebih lambat karena besar
+            radiusDeteksi: 200,
+            radiusSerang: 80,
+            damage: 20,
+            kekuatanDorong: 10,
+            warnaTeks: '#ffff00', // Kuning
+            skorPoin: 50
         }
     };
 </script>
